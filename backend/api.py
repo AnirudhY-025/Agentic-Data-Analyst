@@ -1,0 +1,435 @@
+"""
+InsightFlow AI — FastAPI Backend
+Wraps all existing analysis logic and exposes it over REST + WebSocket.
+The existing Streamlit app.py continues to work independently on port 8501.
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+import traceback
+import warnings
+from pathlib import Path
+from typing import Any
+import os
+from dotenv import load_dotenv
+
+# Use explicit absolute path to load the correct .env file
+env_path = Path(__file__).resolve().parent / ".env"
+load_dotenv(dotenv_path=env_path, override=True)
+
+# Backup warnings before crewai monkey-patches it
+_original_warn = warnings.warn
+
+import uvicorn
+from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+
+warnings.warn = _original_warn
+
+from config import (
+    ANALYSIS_DIR,
+    CHARTS_DIR,
+    COLUMN_OVERRIDES,
+    DATA_DIR,
+    DEFAULT_OUTPUT_FILENAME,
+    REPORTS_DIR,
+    ensure_directories,
+)
+from crew import build_crew
+from tools import (
+    auto_detect_columns,
+    calculate_statistics,
+    clean_dataset,
+    detect_outliers,
+    generate_data_quality_report,
+    generate_markdown_report,
+    generate_pdf_report,
+    generate_visualizations,
+    load_dataset,
+    perform_correlation_analysis,
+    perform_distribution_analysis,
+    perform_group_analysis,
+    perform_trend_analysis,
+    summarize_analysis_for_insights,
+)
+
+warnings.warn = _original_warn
+
+ensure_directories()
+
+app = FastAPI(title="InsightFlow AI API", version="1.0.0")
+
+# ── CORS (allow React dev server) ────────────────────────────────────────────
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Serve chart images as static files
+app.mount("/charts", StaticFiles(directory=str(CHARTS_DIR)), name="charts")
+
+
+# ── Pydantic models ──────────────────────────────────────────────────────────
+class AnalyzeRequest(BaseModel):
+    dataset_name: str
+    question: str = "Analyze this dataset and surface the most important business insights."
+    model: str = "ollama/qwen2.5:3b"
+    date_column: str | None = None
+    metric_column: str | None = None
+    group_column: str | None = None
+
+
+class SaveSettingsRequest(BaseModel):
+    openrouter_api_key: str | None = None
+
+
+# ── Model catalog ─────────────────────────────────────────────────────────────
+OLLAMA_MODELS = [
+    {"id": "ollama/qwen2.5:3b",   "label": "Qwen 2.5 3B  (Fast)",     "provider": "ollama", "free": True},
+    {"id": "ollama/qwen2.5:7b",   "label": "Qwen 2.5 7B  (Thorough)", "provider": "ollama", "free": True},
+    {"id": "ollama/llama3:latest", "label": "Llama 3",                 "provider": "ollama", "free": True},
+]
+
+OPENROUTER_FREE_MODELS = [
+    {"id": "openrouter/mistralai/mistral-7b-instruct:free",        "label": "Mistral 7B Instruct",       "provider": "openrouter", "free": True},
+    {"id": "openrouter/meta-llama/llama-3.1-8b-instruct:free",     "label": "Llama 3.1 8B Instruct",     "provider": "openrouter", "free": True},
+    {"id": "openrouter/google/gemma-2-9b-it:free",                 "label": "Gemma 2 9B IT",             "provider": "openrouter", "free": True},
+    {"id": "openrouter/qwen/qwen-2-7b-instruct:free",              "label": "Qwen 2 7B Instruct",        "provider": "openrouter", "free": True},
+    {"id": "openrouter/microsoft/phi-3-mini-128k-instruct:free",   "label": "Phi-3 Mini 128K",           "provider": "openrouter", "free": True},
+    {"id": "openrouter/nousresearch/hermes-3-llama-3.1-8b:free",   "label": "Hermes 3 Llama 3.1 8B",    "provider": "openrouter", "free": True},
+]
+
+
+@app.get("/api/models")
+async def list_models():
+    """Return available models grouped by provider."""
+    import os
+    key = os.environ.get("OPENROUTER_API_KEY", "")
+    openrouter_available = bool(key and key.strip())
+    return {
+        "ollama": OLLAMA_MODELS,
+        "openrouter": OPENROUTER_FREE_MODELS,
+        "openrouter_configured": openrouter_available,
+    }
+
+
+@app.get("/api/settings")
+async def get_settings():
+    """Return current settings (key is masked for security)."""
+    import os
+    from config import DEFAULT_OLLAMA_BASE_URL
+    key = os.environ.get("OPENROUTER_API_KEY", "")
+    return {
+        "openrouter_configured": bool(key and key.strip()),
+        "openrouter_key_preview": f"{key[:8]}…" if key and len(key) > 8 else None,
+        "ollama_base_url": DEFAULT_OLLAMA_BASE_URL,
+    }
+
+
+@app.post("/api/settings")
+async def save_settings(body: SaveSettingsRequest):
+    """Persist OpenRouter API key to the .env file server-side."""
+    env_path = Path(__file__).resolve().parent / ".env"
+    lines = env_path.read_text(encoding="utf-8").splitlines() if env_path.exists() else []
+
+    # Update or append OPENROUTER_API_KEY
+    key_line = f"OPENROUTER_API_KEY={body.openrouter_api_key or ''}"
+    updated = False
+    new_lines = []
+    for line in lines:
+        if line.startswith("OPENROUTER_API_KEY="):
+            new_lines.append(key_line)
+            updated = True
+        else:
+            new_lines.append(line)
+    if not updated:
+        new_lines.append(key_line)
+
+    env_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+
+    # Hot-reload the env var in the running process
+    import os
+    import config
+    os.environ["OPENROUTER_API_KEY"] = body.openrouter_api_key or ""
+    config.OPENROUTER_API_KEY = body.openrouter_api_key or ""
+
+    return {"success": True, "openrouter_configured": bool(body.openrouter_api_key and body.openrouter_api_key.strip())}
+
+
+
+
+# ── In-memory result cache (keyed by dataset_name) ───────────────────────────
+_last_results: dict[str, Any] = {}
+
+
+# ── Helper ───────────────────────────────────────────────────────────────────
+def _safe(data: Any) -> Any:
+    """Recursively convert non-serialisable values for JSON."""
+    if isinstance(data, dict):
+        return {k: _safe(v) for k, v in data.items()}
+    if isinstance(data, list):
+        return [_safe(i) for i in data]
+    try:
+        json.dumps(data)
+        return data
+    except (TypeError, ValueError):
+        return str(data)
+
+
+# ── Endpoints ────────────────────────────────────────────────────────────────
+
+@app.get("/api/health")
+async def health():
+    return {"status": "ok"}
+
+
+@app.post("/api/upload")
+async def upload_dataset(file: UploadFile = File(...)):
+    allowed = {".csv", ".xlsx", ".xls"}
+    suffix = Path(file.filename).suffix.lower()
+    if suffix not in allowed:
+        raise HTTPException(400, f"Unsupported file type: {suffix}")
+    dest = DATA_DIR / file.filename
+    dest.write_bytes(await file.read())
+    return {"filename": file.filename, "size": dest.stat().st_size}
+
+
+@app.get("/api/datasets")
+async def list_datasets():
+    files = []
+    for p in DATA_DIR.iterdir():
+        if p.suffix.lower() in {".csv", ".xlsx", ".xls"} and not p.name.startswith("."):
+            files.append({"name": p.name, "size": p.stat().st_size})
+    return {"datasets": sorted(files, key=lambda x: x["name"])}
+
+
+@app.get("/api/datasets/{name}/preview")
+async def preview_dataset(name: str, rows: int = 20):
+    path = DATA_DIR / name
+    if not path.exists():
+        raise HTTPException(404, "Dataset not found")
+    df = load_dataset(path)
+    return {
+        "columns": list(df.columns),
+        "dtypes": {c: str(df[c].dtype) for c in df.columns},
+        "shape": [int(df.shape[0]), int(df.shape[1])],
+        "rows": _safe(df.head(rows).to_dict(orient="records")),
+    }
+
+
+@app.get("/api/datasets/{name}/columns")
+async def detect_columns(name: str):
+    path = DATA_DIR / name
+    if not path.exists():
+        raise HTTPException(404, "Dataset not found")
+    df = load_dataset(path)
+    detected = auto_detect_columns(df)
+    return {
+        "columns": list(df.columns),
+        "detected": detected,
+    }
+
+
+@app.get("/api/analysis")
+async def get_last_analysis():
+    if not _last_results:
+        raise HTTPException(404, "No analysis results available. Run analyze first.")
+    return _last_results
+
+
+@app.get("/api/charts")
+async def list_charts():
+    charts = []
+    for p in sorted(CHARTS_DIR.iterdir()):
+        if p.suffix.lower() in {".png", ".jpg", ".jpeg"}:
+            charts.append({"filename": p.name, "url": f"/charts/{p.name}"})
+    return {"charts": charts}
+
+
+@app.get("/api/reports")
+async def list_reports():
+    reports = []
+    for p in sorted(REPORTS_DIR.iterdir()):
+        if p.suffix.lower() in {".md", ".pdf"}:
+            reports.append({
+                "filename": p.name,
+                "format": p.suffix.lstrip(".").upper(),
+                "size": p.stat().st_size,
+                "url": f"/api/reports/{p.name}/download",
+            })
+    return {"reports": reports}
+
+
+@app.get("/api/reports/{filename}/download")
+async def download_report(filename: str):
+    path = REPORTS_DIR / filename
+    if not path.exists():
+        raise HTTPException(404, "Report not found")
+    media_type = "application/pdf" if path.suffix == ".pdf" else "text/markdown"
+    return FileResponse(str(path), media_type=media_type, filename=filename)
+
+
+@app.get("/api/reports/{filename}/content")
+async def report_content(filename: str):
+    path = REPORTS_DIR / filename
+    if not path.exists():
+        raise HTTPException(404, "Report not found")
+    if path.suffix != ".md":
+        raise HTTPException(400, "Content only available for markdown reports")
+    return {"content": path.read_text(encoding="utf-8")}
+
+
+# ── WebSocket — live workflow streaming ──────────────────────────────────────
+@app.websocket("/ws/workflow")
+async def workflow_ws(websocket: WebSocket):
+    await websocket.accept()
+    try:
+        raw = await websocket.receive_text()
+        req = AnalyzeRequest(**json.loads(raw))
+    except Exception as exc:
+        await websocket.send_text(json.dumps({"type": "error", "message": str(exc)}))
+        await websocket.close()
+        return
+
+    async def send(event: dict):
+        await websocket.send_text(json.dumps(_safe(event)))
+
+    try:
+        dataset_path = DATA_DIR / req.dataset_name
+        if not dataset_path.exists():
+            await send({"type": "error", "message": f"Dataset not found: {req.dataset_name}"})
+            return
+
+        # Apply column overrides
+        COLUMN_OVERRIDES["date_column"] = req.date_column
+        COLUMN_OVERRIDES["metric_column"] = req.metric_column
+        COLUMN_OVERRIDES["group_column"] = req.group_column
+
+        # Step 1 — Clean
+        await send({"type": "step", "step": 1, "label": "Cleaning & validating dataset", "status": "running"})
+        await asyncio.sleep(0)
+        df = load_dataset(dataset_path)
+        cleaned_df, clean_summary = clean_dataset(df)
+        await send({"type": "step", "step": 1, "label": "Cleaning & validating dataset", "status": "done",
+                    "detail": f"{cleaned_df.shape[0]:,} rows × {cleaned_df.shape[1]} columns"})
+
+        # Step 2 — Quality report
+        await send({"type": "step", "step": 2, "label": "Generating data quality report", "status": "running"})
+        await asyncio.sleep(0)
+        quality_report = generate_data_quality_report(cleaned_df, dataset_path)
+        await send({"type": "step", "step": 2, "label": "Generating data quality report", "status": "done"})
+
+        # Step 3 — Statistics
+        await send({"type": "step", "step": 3, "label": "Computing statistics & analysis", "status": "running"})
+        await asyncio.sleep(0)
+        statistics = calculate_statistics(cleaned_df)
+        correlation = perform_correlation_analysis(cleaned_df)
+        trend = perform_trend_analysis(cleaned_df)
+        distribution = perform_distribution_analysis(cleaned_df)
+        grouping = perform_group_analysis(cleaned_df)
+        outliers = detect_outliers(cleaned_df)
+        await send({"type": "step", "step": 3, "label": "Computing statistics & analysis", "status": "done"})
+
+        # Step 4 — Visualizations
+        await send({"type": "step", "step": 4, "label": "Generating visualizations", "status": "running"})
+        await asyncio.sleep(0)
+        visualizations = generate_visualizations(cleaned_df, {
+            "statistics": statistics, "correlation": correlation,
+            "trend": trend, "distribution": distribution,
+            "grouping": grouping, "outliers": outliers, "question": req.question,
+        })
+        chart_count = len(visualizations.get("charts", []))
+        await send({"type": "step", "step": 4, "label": "Generating visualizations", "status": "done",
+                    "detail": f"{chart_count} chart(s) generated"})
+
+        # Step 5 — Reports
+        await send({"type": "step", "step": 5, "label": "Building Markdown & PDF reports", "status": "running"})
+        await asyncio.sleep(0)
+        evidence = summarize_analysis_for_insights(quality_report, statistics, correlation, outliers, grouping)
+        report_payload = {
+            "report_title": DEFAULT_OUTPUT_FILENAME.replace("_", " ").title(),
+            "executive_summary": "This report was generated by the InsightFlow AI agentic pipeline.",
+            "dataset_overview": {
+                "rows": int(df.shape[0]),
+                "columns": int(df.shape[1]),
+                "cleaned_rows": int(cleaned_df.shape[0]),
+                "cleaned_columns": int(cleaned_df.shape[1]),
+                "source": str(dataset_path),
+                "cleaning_summary": clean_summary,
+            },
+            "data_quality_summary": quality_report,
+            "statistical_analysis": {"evidence": evidence, "trend": trend, "distribution": distribution},
+            "visualizations": visualizations.get("charts", []),
+            "business_insights": [],
+            "recommendations": [],
+        }
+        markdown_path = generate_markdown_report(report_payload, REPORTS_DIR / f"{DEFAULT_OUTPUT_FILENAME}.md")
+        pdf_path = generate_pdf_report(markdown_path, REPORTS_DIR / f"{DEFAULT_OUTPUT_FILENAME}.pdf")
+        await send({"type": "step", "step": 5, "label": "Building Markdown & PDF reports", "status": "done",
+                    "detail": f"MD + PDF saved"})
+
+        # Step 6 — CrewAI LLM
+        await send({"type": "step", "step": 6, "label": "Running CrewAI LLM agents", "status": "running"})
+        crew_result = None
+        crew_error = None
+        try:
+            crew = build_crew(model_name=req.model)
+            # Run in executor to not block the event loop
+            loop = asyncio.get_event_loop()
+            crew_result = await loop.run_in_executor(
+                None, lambda: crew.kickoff(inputs={"dataset_path": str(dataset_path), "question": req.question})
+            )
+            await send({"type": "step", "step": 6, "label": "Running CrewAI LLM agents", "status": "done"})
+        except Exception as exc:
+            crew_error = str(exc)
+            await send({"type": "step", "step": 6, "label": "Running CrewAI LLM agents", "status": "warning",
+                        "detail": f"LLM step skipped: {type(exc).__name__}"})
+
+        # Assemble and cache results
+        charts_list = [
+            {"filename": Path(c["path"]).name, "url": f"/charts/{Path(c['path']).name}", "title": c.get("title", ""), "chart_type": c.get("chart_type", "")}
+            for c in visualizations.get("charts", [])
+        ]
+        results = {
+            "quality": quality_report,
+            "statistics": statistics,
+            "correlation": correlation,
+            "trend": trend,
+            "distribution": distribution,
+            "grouping": grouping,
+            "outliers": outliers,
+            "charts": charts_list,
+            "crew_result": str(crew_result) if crew_result else None,
+            "crew_error": crew_error,
+            "reports": {
+                "markdown": str(markdown_path),
+                "pdf": str(pdf_path),
+            },
+            "dataset_overview": report_payload["dataset_overview"],
+            "clean_summary": clean_summary,
+        }
+        _last_results.update(results)
+
+        await send({"type": "complete", "results": results})
+
+    except WebSocketDisconnect:
+        pass
+    except Exception as exc:
+        tb = traceback.format_exc()
+        await send({"type": "error", "message": str(exc), "traceback": tb})
+    finally:
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
+
+if __name__ == "__main__":
+    uvicorn.run("api:app", host="0.0.0.0", port=8000, reload=True)

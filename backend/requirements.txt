@@ -1,0 +1,13 @@
+crewai
+streamlit
+pandas
+numpy
+matplotlib
+seaborn
+openpyxl
+reportlab
+python-dotenv
+fastapi
+uvicorn[standard]
+python-multipart
+aiofiles
