@@ -2,13 +2,13 @@ import { initializeApp } from 'firebase/app'
 import { getAuth, GoogleAuthProvider } from 'firebase/auth'
 
 const firebaseConfig = {
-  apiKey: "AIzaSyDK_COkdyigF1Jngo0NZl66HA7DrXvZvQU",
-  authDomain: "insightflow-ai-8bcf8.firebaseapp.com",
-  projectId: "insightflow-ai-8bcf8",
-  storageBucket: "insightflow-ai-8bcf8.firebasestorage.app",
-  messagingSenderId: "249500909371",
-  appId: "1:249500909371:web:c714bce836be39c4be011e",
-  measurementId: "G-9TPPWZGBBX"
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID
 }
 
 const app = initializeApp(firebaseConfig)
