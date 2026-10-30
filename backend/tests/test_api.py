@@ -36,3 +36,27 @@ def test_list_datasets():
     assert "datasets" in data
     filenames = [d["name"] for d in data["datasets"]]
     assert "test_sales_data.csv" in filenames
+
+def test_models_endpoint_has_ollama_availability():
+    response = client.get("/api/models")
+    assert response.status_code == 200
+    data = response.json()
+    assert "ollama" in data
+    assert "openrouter" in data
+    assert "ollama_available" in data
+    assert isinstance(data["ollama_available"], bool)
+
+def test_settings_byok_endpoints():
+    # GET settings returns ollama status
+    get_res = client.get("/api/settings")
+    assert get_res.status_code == 200
+    assert "ollama_available" in get_res.json()
+
+    # POST valid key
+    post_res = client.post("/api/settings", json={"openrouter_api_key": "sk-or-v1-abcdef1234567890"})
+    assert post_res.status_code == 200
+    assert post_res.json()["valid"] is True
+
+    # POST short key should be rejected
+    bad_res = client.post("/api/settings", json={"openrouter_api_key": "short"})
+    assert bad_res.status_code == 400

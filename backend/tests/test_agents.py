@@ -22,8 +22,7 @@ def setup_test_env():
     
     yield dest_path
 
-@pytest.mark.asyncio
-async def test_data_prep_and_analysis_tools(setup_test_env):
+def test_data_prep_and_analysis_tools(setup_test_env):
     """
     Test the deterministic Python tools that feed the CrewAI agents.
     Ensures mathematical accuracy before the LLM generates the report.

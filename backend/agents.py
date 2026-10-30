@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from crewai import Agent, LLM
 
-from config import DEFAULT_LLM_MODEL, DEFAULT_LLM_TEMPERATURE, DEFAULT_OLLAMA_BASE_URL, OPENROUTER_API_KEY
+from config import DEFAULT_LLM_MODEL, DEFAULT_LLM_TEMPERATURE, DEFAULT_OLLAMA_BASE_URL, OPENROUTER_API_KEY, is_ollama_available
 from tools import (
     calculate_statistics_tool,
     clean_dataset_tool,
@@ -20,26 +20,34 @@ from tools import (
 )
 
 
-def build_llm(model_name: str | None = None) -> LLM:
+def build_llm(model_name: str | None = None, api_key: str | None = None) -> LLM:
     """Build an LLM instance for the given model.
 
-    - Ollama models (prefix 'ollama/'): connect to local Ollama server.
+    - Ollama models (prefix 'ollama/'): connect to local Ollama server if running.
     - OpenRouter models (prefix 'openrouter/'): connect via OpenRouter API
-      using the OPENROUTER_API_KEY env var (handled by LiteLLM automatically).
+      using the per-request user api_key or fallback OPENROUTER_API_KEY env var.
     """
     import os
     name = model_name or DEFAULT_LLM_MODEL
 
     if name.startswith("openrouter/"):
-        # Set the key so LiteLLM can pick it up
-        if OPENROUTER_API_KEY:
-            os.environ["OPENROUTER_API_KEY"] = OPENROUTER_API_KEY
+        key = (api_key or "").strip() or os.environ.get("OPENROUTER_API_KEY", "").strip() or OPENROUTER_API_KEY.strip()
+        if not key:
+            raise ValueError(
+                "OpenRouter API key is required. Please provide your free API key in Settings or the model selector (get one free at https://openrouter.ai/keys)."
+            )
+        os.environ["OPENROUTER_API_KEY"] = key
         return LLM(
             model=name,
+            api_key=key,
             temperature=DEFAULT_LLM_TEMPERATURE,
         )
     else:
-        # Ollama or any other local provider
+        # Ollama or local provider
+        if not is_ollama_available(DEFAULT_OLLAMA_BASE_URL, timeout=1.0):
+            raise ConnectionError(
+                f"Ollama is not running at {DEFAULT_OLLAMA_BASE_URL}. In cloud-hosted mode (e.g. Render), local Ollama is not accessible. Please switch to an OpenRouter model with your free API key, or install and run Ollama locally on your desktop."
+            )
         return LLM(
             model=name,
             base_url=DEFAULT_OLLAMA_BASE_URL,
@@ -47,8 +55,8 @@ def build_llm(model_name: str | None = None) -> LLM:
         )
 
 
-def build_agents(model_name: str | None = None) -> dict[str, Agent]:
-    llm = build_llm(model_name)
+def build_agents(model_name: str | None = None, api_key: str | None = None) -> dict[str, Agent]:
+    llm = build_llm(model_name, api_key=api_key)
     return {
         "planner": Agent(
             role="Planner Agent",

@@ -56,6 +56,18 @@ COLUMN_OVERRIDES = {
 }
 
 
+def is_ollama_available(base_url: str | None = None, timeout: float = 0.8) -> bool:
+    """Check if the local Ollama daemon is reachable."""
+    import urllib.request
+    url = f"{(base_url or DEFAULT_OLLAMA_BASE_URL).rstrip('/')}/api/tags"
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "InsightFlow"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.status == 200
+    except Exception:
+        return False
+
+
 def ensure_directories(user_id: str | None = None) -> None:
     get_user_data_dir(user_id)
     get_user_outputs_dir(user_id)

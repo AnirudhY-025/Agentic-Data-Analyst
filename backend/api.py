@@ -92,6 +92,7 @@ class AnalyzeRequest(BaseModel):
     dataset_name: str
     question: str = "Analyze this dataset and surface the most important business insights."
     model: str = "ollama/qwen2.5:3b"
+    openrouter_api_key: str | None = None
     date_column: str | None = None
     metric_column: str | None = None
     group_column: str | None = None
@@ -120,58 +121,34 @@ OPENROUTER_FREE_MODELS = [
 
 @app.get("/api/models")
 async def list_models():
-    """Return available models grouped by provider."""
-    import os
-    key = os.environ.get("OPENROUTER_API_KEY", "")
-    openrouter_available = bool(key and key.strip())
+    """Return available models grouped by provider and Ollama reachability."""
+    from config import is_ollama_available
+    ollama_ok = is_ollama_available(timeout=0.8)
     return {
         "ollama": OLLAMA_MODELS,
         "openrouter": OPENROUTER_FREE_MODELS,
-        "openrouter_configured": openrouter_available,
+        "ollama_available": ollama_ok,
     }
 
 
 @app.get("/api/settings")
 async def get_settings():
-    """Return current settings (key is masked for security)."""
-    import os
-    from config import DEFAULT_OLLAMA_BASE_URL
-    key = os.environ.get("OPENROUTER_API_KEY", "")
+    """Return current server settings and Ollama reachability."""
+    from config import DEFAULT_OLLAMA_BASE_URL, is_ollama_available
+    ollama_ok = is_ollama_available(timeout=0.8)
     return {
-        "openrouter_configured": bool(key and key.strip()),
-        "openrouter_key_preview": "••••••••••••••••" if key and key.strip() else None,
+        "ollama_available": ollama_ok,
         "ollama_base_url": DEFAULT_OLLAMA_BASE_URL,
     }
 
 
 @app.post("/api/settings")
 async def save_settings(body: SaveSettingsRequest):
-    """Persist OpenRouter API key to the .env file server-side."""
-    env_path = Path(__file__).resolve().parent / ".env"
-    lines = env_path.read_text(encoding="utf-8").splitlines() if env_path.exists() else []
-
-    # Update or append OPENROUTER_API_KEY
-    key_line = f"OPENROUTER_API_KEY={body.openrouter_api_key or ''}"
-    updated = False
-    new_lines = []
-    for line in lines:
-        if line.startswith("OPENROUTER_API_KEY="):
-            new_lines.append(key_line)
-            updated = True
-        else:
-            new_lines.append(line)
-    if not updated:
-        new_lines.append(key_line)
-
-    env_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
-
-    # Hot-reload the env var in the running process
-    import os
-    import config
-    os.environ["OPENROUTER_API_KEY"] = body.openrouter_api_key or ""
-    config.OPENROUTER_API_KEY = body.openrouter_api_key or ""
-
-    return {"success": True, "openrouter_configured": bool(body.openrouter_api_key and body.openrouter_api_key.strip())}
+    """Validate OpenRouter API key format."""
+    key = (body.openrouter_api_key or "").strip()
+    if key and len(key) < 10:
+        raise HTTPException(400, "OpenRouter API key seems too short. Please verify your key at openrouter.ai/keys.")
+    return {"success": True, "valid": bool(key)}
 
 
 
@@ -412,7 +389,7 @@ async def workflow_ws(websocket: WebSocket):
         crew_result = None
         crew_error = None
         try:
-            crew = build_crew(model_name=req.model)
+            crew = build_crew(model_name=req.model, api_key=req.openrouter_api_key)
             # Run in executor to not block the event loop
             loop = asyncio.get_event_loop()
             crew_result = await loop.run_in_executor(
@@ -421,8 +398,14 @@ async def workflow_ws(websocket: WebSocket):
             await send({"type": "step", "step": 6, "label": "Running CrewAI LLM agents", "status": "done"})
         except Exception as exc:
             crew_error = str(exc)
+            if "Ollama is not running" in crew_error or "Connection error" in crew_error:
+                detail_msg = "Ollama offline (desktop only)"
+            elif "OpenRouter API key" in crew_error:
+                detail_msg = "OpenRouter key required"
+            else:
+                detail_msg = f"LLM step skipped: {type(exc).__name__}"
             await send({"type": "step", "step": 6, "label": "Running CrewAI LLM agents", "status": "warning",
-                        "detail": f"LLM step skipped: {type(exc).__name__}"})
+                        "detail": detail_msg})
 
         # Assemble and cache results
         charts_list = [

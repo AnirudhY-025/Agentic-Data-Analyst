@@ -201,12 +201,51 @@ function ChartsPanel({ charts }: { charts: any[] }) {
 }
 
 function CrewPanel({ crewResult, crewError }: { crewResult: string | null; crewError: string | null }) {
-  if (crewError && !crewResult) return (
-    <div className="p-5 rounded-2xl border text-amber-300 text-sm" style={{ background: 'rgba(245,158,11,0.06)', borderColor: 'rgba(245,158,11,0.2)' }}>
-      ⚠️ <strong>CrewAI LLM step could not complete</strong> — the deterministic analysis outputs are still fully available.<br />
-      <span className="text-xs opacity-70 mt-1 block">{crewError}</span>
-    </div>
-  )
+  if (crewError && !crewResult) {
+    const isOllamaError = crewError.includes('Ollama is not running') || crewError.includes('Connection error') || crewError.includes('11434') || crewError.includes('OpenAI API')
+    const isKeyError = crewError.includes('OpenRouter API key') || crewError.includes('API key required')
+
+    return (
+      <div className="p-6 rounded-2xl border text-sm" style={{ background: 'rgba(245,158,11,0.06)', borderColor: 'rgba(245,158,11,0.25)', color: '#FCD34D' }}>
+        <div className="text-base font-bold flex items-center gap-2 mb-2 text-amber-300">
+          ⚠️ CrewAI LLM Step Skipped
+        </div>
+        <p className="text-xs text-amber-200/80 leading-relaxed mb-3">
+          The deterministic analytical outputs (charts, statistics, correlation, trends, data quality, and PDF reports) were generated successfully and are fully available in the tabs above.
+        </p>
+        {isOllamaError && (
+          <div className="mt-3 p-4 rounded-xl border bg-black/20" style={{ borderColor: 'rgba(245,158,11,0.2)' }}>
+            <div className="font-semibold text-xs text-amber-300 mb-1">🖥️ Cloud Deployment Notice — Local Ollama Offline:</div>
+            <p className="text-xs text-slate-300 leading-relaxed mb-3">
+              Ollama runs locally on your desktop machine (<code>localhost:11434</code>) and does not exist inside the cloud container.
+              To get full AI agent synthesis in cloud mode, switch to an OpenRouter model with your free personal key.
+            </p>
+            <a href="/app/analyze" className="inline-block text-xs px-4 py-2 rounded-lg font-bold text-white transition-all shadow-md"
+              style={{ background: 'linear-gradient(135deg,#7C3AED,#8B5CF6)' }}>
+              Switch to OpenRouter Cloud & Re-run →
+            </a>
+          </div>
+        )}
+        {isKeyError && (
+          <div className="mt-3 p-4 rounded-xl border bg-black/20" style={{ borderColor: 'rgba(245,158,11,0.2)' }}>
+            <div className="font-semibold text-xs text-amber-300 mb-1">🔑 Bring Your Own Key Required:</div>
+            <p className="text-xs text-slate-300 leading-relaxed mb-3">
+              To keep InsightFlow free and multi-tenant without burning shared server keys, please provide your free OpenRouter API key.
+            </p>
+            <a href="/app/settings" className="inline-block text-xs px-4 py-2 rounded-lg font-bold text-white transition-all shadow-md"
+              style={{ background: 'linear-gradient(135deg,#D97706,#F59E0B)' }}>
+              Configure Key in Settings →
+            </a>
+          </div>
+        )}
+        {!isOllamaError && !isKeyError && (
+          <div className="text-xs font-mono text-slate-400 bg-black/30 p-3 rounded-lg border border-white/5 mt-2">
+            {crewError}
+          </div>
+        )}
+      </div>
+    )
+  }
   if (!crewResult) return <div className="p-8 text-center text-slate-400 text-sm rounded-2xl border" style={{ background: 'rgba(13,22,39,0.9)', borderColor: 'rgba(255,255,255,0.07)' }}>No CrewAI output produced.</div>
   return (
     <div className="rounded-2xl border p-6 prose prose-invert max-w-none text-sm leading-relaxed text-slate-300" style={{ background: 'rgba(13,22,39,0.9)', borderColor: 'rgba(6,182,212,0.15)' }}>

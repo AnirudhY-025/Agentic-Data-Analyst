@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Upload, CheckCircle2, AlertCircle, Loader2, ChevronDown, ChevronUp, Play, Cpu, Globe, Lock } from 'lucide-react'
+import { Upload, CheckCircle2, AlertCircle, Loader2, ChevronDown, ChevronUp, Play, Cpu, Globe, Lock, ExternalLink } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
-import { getDatasets, getColumns, uploadDataset, createWorkflowSocket, getModels, type WorkflowEvent, type ModelEntry } from '../../lib/api'
+import { getDatasets, getColumns, uploadDataset, createWorkflowSocket, getModels, getUserOpenRouterKey, setUserOpenRouterKey, saveSettings, type WorkflowEvent, type ModelEntry } from '../../lib/api'
 import { useStore } from '../../store/useStore'
 import { cn } from '../../lib/utils'
 
@@ -16,11 +16,16 @@ export default function Analyze() {
   const [dragOver, setDragOver] = useState(false)
   const [uploading, setUploading] = useState(false)
 
-  // Model catalog from backend
+  // Model catalog and BYOK state
   const [ollamaModels, setOllamaModels] = useState<ModelEntry[]>([])
   const [openrouterModels, setOpenrouterModels] = useState<ModelEntry[]>([])
-  const [openrouterConfigured, setOpenrouterConfigured] = useState(false)
+  const [ollamaAvailable, setOllamaAvailable] = useState(true)
   const [modelsLoaded, setModelsLoaded] = useState(false)
+  const [userApiKey, setUserApiKey] = useState(getUserOpenRouterKey())
+  const [inlineKeyInput, setInlineKeyInput] = useState('')
+  const [inlineKeySaving, setInlineKeySaving] = useState(false)
+  const [inlineKeyError, setInlineKeyError] = useState('')
+  const [validationError, setValidationError] = useState('')
 
   const { selectedDataset, setSelectedDataset, question, setQuestion, model, setModel,
     dateColumn, metricColumn, groupColumn, setColumnOverrides,
@@ -35,8 +40,12 @@ export default function Analyze() {
     getModels().then(d => {
       setOllamaModels(d.ollama)
       setOpenrouterModels(d.openrouter)
-      setOpenrouterConfigured(d.openrouter_configured)
+      setOllamaAvailable(d.ollama_available)
       setModelsLoaded(true)
+      // If Ollama is offline (such as on Render cloud host), automatically default to an OpenRouter free model
+      if (!d.ollama_available && model.startsWith('ollama/')) {
+        setModel('openrouter/mistralai/mistral-7b-instruct:free')
+      }
     }).catch(() => setModelsLoaded(true))
   }, [])
 
@@ -62,13 +71,45 @@ export default function Analyze() {
     }
   }, [])
 
+  const handleSaveInlineKey = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!inlineKeyInput.trim()) return
+    setInlineKeySaving(true)
+    setInlineKeyError('')
+    try {
+      await saveSettings({ openrouter_api_key: inlineKeyInput.trim() })
+      setUserOpenRouterKey(inlineKeyInput.trim())
+      setUserApiKey(inlineKeyInput.trim())
+      setInlineKeyInput('')
+      setValidationError('')
+    } catch (err: any) {
+      setInlineKeyError(err?.response?.data?.detail || 'Invalid key format. Please check your key at openrouter.ai/keys.')
+    } finally {
+      setInlineKeySaving(false)
+    }
+  }
+
   const runWorkflow = () => {
     if (!selectedDataset) return
+    setValidationError('')
+
+    if (model.startsWith('ollama/') && !ollamaAvailable) {
+      setValidationError('Ollama is not running on this server. Please switch to an OpenRouter cloud model with your free key.')
+      return
+    }
+
+    const activeKey = getUserOpenRouterKey()
+    if (model.startsWith('openrouter/') && !activeKey) {
+      setValidationError('Please enter your free OpenRouter API key before running the cloud AI model.')
+      return
+    }
+
     startWorkflow()
     createWorkflowSocket({
       dataset_name: selectedDataset,
       question,
       model,
+      openrouter_api_key: activeKey || null,
       date_column: dateColumn || null,
       metric_column: metricColumn || null,
       group_column: groupColumn || null,
@@ -127,8 +168,8 @@ export default function Analyze() {
             {/* Provider tabs */}
             <div className="flex gap-2 mb-4">
               {[
-                { key: 'ollama', label: 'Ollama (Local)', icon: Cpu, color: '#06B6D4' },
-                { key: 'openrouter', label: 'OpenRouter (Cloud)', icon: Globe, color: '#8B5CF6' },
+                { key: 'openrouter', label: 'OpenRouter (Cloud)', icon: Globe, color: '#8B5CF6', badge: userApiKey ? 'Ready' : 'BYOK' },
+                { key: 'ollama', label: 'Ollama (Local)', icon: Cpu, color: '#06B6D4', badge: ollamaAvailable ? 'Local Active' : 'Desktop Only' },
               ].map(p => (
                 <button key={p.key}
                   onClick={() => {
@@ -139,11 +180,17 @@ export default function Analyze() {
                   style={{
                     background: selectedProvider === p.key ? `${p.color}18` : 'rgba(255,255,255,0.03)',
                     borderColor: selectedProvider === p.key ? `${p.color}40` : 'rgba(255,255,255,0.08)',
-                    color: selectedProvider === p.key ? p.color : '#475569',
+                    color: selectedProvider === p.key ? p.color : '#64748B',
                   }}>
-                  <p.icon size={12} /> {p.label}
-                  {p.key === 'openrouter' && !openrouterConfigured && (
-                    <Lock size={10} className="text-amber-400 ml-1" />
+                  <p.icon size={13} /> {p.label}
+                  {p.badge && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded font-mono uppercase font-bold"
+                      style={{
+                        background: p.key === 'ollama' && !ollamaAvailable ? 'rgba(245,158,11,0.15)' : 'rgba(255,255,255,0.08)',
+                        color: p.key === 'ollama' && !ollamaAvailable ? '#F59E0B' : 'inherit'
+                      }}>
+                      {p.badge}
+                    </span>
                   )}
                 </button>
               ))}
@@ -152,35 +199,86 @@ export default function Analyze() {
             {/* Ollama models */}
             {selectedProvider === 'ollama' && (
               <div className="flex flex-col gap-2">
+                {!ollamaAvailable && (
+                  <div className="p-4 rounded-xl border text-sm mb-2" style={{ background: 'rgba(245,158,11,0.06)', borderColor: 'rgba(245,158,11,0.25)', color: '#FCD34D' }}>
+                    <div className="flex items-center gap-2 font-semibold mb-1">
+                      <AlertCircle size={14} className="text-amber-400" /> Desktop LLM Offline (Cloud Deployment Detected)
+                    </div>
+                    <div className="text-xs text-amber-200/70 leading-relaxed mb-3">
+                      Ollama runs locally on your desktop machine (<code>localhost:11434</code>) and cannot run inside Render's cloud container.
+                      To run the AI agents on the cloud, please use <strong>OpenRouter (Cloud)</strong> with your free key.
+                    </div>
+                    <button onClick={() => setModel(openrouterModels[0]?.id || 'openrouter/mistralai/mistral-7b-instruct:free')}
+                      className="text-xs px-3.5 py-1.5 rounded-lg font-semibold text-white transition-all shadow-md"
+                      style={{ background: 'linear-gradient(135deg,#7C3AED,#8B5CF6)' }}>
+                      Switch to OpenRouter Cloud →
+                    </button>
+                  </div>
+                )}
                 {ollamaModels.map(m => (
-                  <ModelOption key={m.id} m={m} selected={model === m.id} onSelect={() => setModel(m.id)} color="#06B6D4" />
+                  <ModelOption key={m.id} m={m} selected={model === m.id} onSelect={() => setModel(m.id)} color="#06B6D4" disabled={!ollamaAvailable} />
                 ))}
-                <p className="text-xs text-slate-500 mt-1">Ollama must be running locally at <code className="text-cyan-500">localhost:11434</code></p>
+                <p className="text-xs text-slate-500 mt-1">
+                  {ollamaAvailable ? 'Connected to local Ollama at localhost:11434' : 'Ollama requires a desktop installation to run locally'}
+                </p>
               </div>
             )}
 
-            {/* OpenRouter models */}
+            {/* OpenRouter models (BYOK) */}
             {selectedProvider === 'openrouter' && (
-              <>
-                {!openrouterConfigured ? (
-                  <div className="p-4 rounded-xl border text-sm" style={{ background: 'rgba(245,158,11,0.06)', borderColor: 'rgba(245,158,11,0.2)', color: '#FCD34D' }}>
-                    <div className="flex items-center gap-2 font-semibold mb-1"><Lock size={13} /> OpenRouter API key not configured</div>
-                    <div className="text-xs text-amber-200/60">Go to <strong>Settings</strong> to add your free OpenRouter API key, then come back here.</div>
-                    <button onClick={() => navigate('/app/settings')}
-                      className="mt-3 text-xs px-3 py-1.5 rounded-lg font-semibold text-white"
-                      style={{ background: 'linear-gradient(135deg,#D97706,#F59E0B)' }}>
-                      Open Settings →
-                    </button>
+              <div className="flex flex-col gap-3">
+                {!userApiKey ? (
+                  <div className="p-4 rounded-xl border text-sm" style={{ background: 'rgba(139,92,246,0.08)', borderColor: 'rgba(139,92,246,0.25)', color: '#E2E8F0' }}>
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2 font-semibold text-purple-300">
+                        <Lock size={13} /> Bring Your Own Free Key (BYOK)
+                      </div>
+                      <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer"
+                        className="text-xs text-cyan-400 hover:underline flex items-center gap-1 font-semibold">
+                        Get Free Key <ExternalLink size={10} />
+                      </a>
+                    </div>
+                    <p className="text-xs text-slate-400 mb-3 leading-relaxed">
+                      To run AI agents without using shared resources, provide your free OpenRouter API key.
+                      It is kept in your browser's <code className="text-cyan-400">LocalStorage</code> and transmitted per analysis in memory.
+                    </p>
+                    <form onSubmit={handleSaveInlineKey} className="flex gap-2">
+                      <input
+                        type="password"
+                        value={inlineKeyInput}
+                        onChange={e => setInlineKeyInput(e.target.value)}
+                        placeholder="Paste sk-or-v1-... key"
+                        className="flex-1 px-3 py-2 rounded-xl text-xs text-slate-200 placeholder:text-slate-600 outline-none"
+                        style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', fontFamily: 'monospace' }}
+                      />
+                      <button type="submit" disabled={inlineKeySaving || !inlineKeyInput.trim()}
+                        className="px-4 py-2 rounded-xl font-bold text-xs flex items-center gap-1.5 text-white"
+                        style={{ background: inlineKeyInput.trim() ? 'linear-gradient(135deg,#7C3AED,#8B5CF6)' : 'rgba(255,255,255,0.06)' }}>
+                        {inlineKeySaving ? <Loader2 size={11} className="animate-spin" /> : null}
+                        Save Key
+                      </button>
+                    </form>
+                    {inlineKeyError && <div className="mt-2 text-xs text-rose-400">{inlineKeyError}</div>}
                   </div>
                 ) : (
-                  <div className="flex flex-col gap-2">
-                    {openrouterModels.map(m => (
-                      <ModelOption key={m.id} m={m} selected={model === m.id} onSelect={() => setModel(m.id)} color="#8B5CF6" />
-                    ))}
-                    <p className="text-xs text-slate-500 mt-1">All listed models are <span className="text-emerald-400 font-semibold">free</span> on OpenRouter.</p>
+                  <div className="flex items-center justify-between px-3.5 py-2 rounded-lg" style={{ background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.2)' }}>
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 size={13} className="text-emerald-400" />
+                      <span className="text-xs text-emerald-300 font-medium">Your OpenRouter Key is Active (Browser LocalStorage)</span>
+                    </div>
+                    <button onClick={() => navigate('/app/settings')} className="text-[11px] text-slate-400 hover:text-cyan-400 underline">
+                      Manage / Change
+                    </button>
                   </div>
                 )}
-              </>
+
+                <div className="flex flex-col gap-2">
+                  {openrouterModels.map(m => (
+                    <ModelOption key={m.id} m={m} selected={model === m.id} onSelect={() => setModel(m.id)} color="#8B5CF6" />
+                  ))}
+                  <p className="text-xs text-slate-500 mt-1">All listed models are <span className="text-emerald-400 font-semibold">100% free</span> on OpenRouter.</p>
+                </div>
+              </div>
             )}
           </>
         )}
@@ -262,6 +360,16 @@ export default function Analyze() {
         )}
       </AnimatePresence>
 
+      {/* Validation warning */}
+      {validationError && (
+        <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }}
+          className="mb-4 p-3.5 rounded-xl border flex items-center gap-2.5 text-xs text-rose-300"
+          style={{ background: 'rgba(244,63,94,0.08)', borderColor: 'rgba(244,63,94,0.25)' }}>
+          <AlertCircle size={14} className="text-rose-400 flex-shrink-0" />
+          <span>{validationError}</span>
+        </motion.div>
+      )}
+
       {/* Run button */}
       <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.25 }}>
         <motion.button
@@ -284,10 +392,14 @@ export default function Analyze() {
 }
 
 /* ── Sub-components ── */
-function ModelOption({ m, selected, onSelect, color }: { m: ModelEntry; selected: boolean; onSelect: () => void; color: string }) {
+function ModelOption({ m, selected, onSelect, color, disabled = false }: { m: ModelEntry; selected: boolean; onSelect: () => void; color: string; disabled?: boolean }) {
   return (
     <button onClick={onSelect}
-      className="w-full flex items-center justify-between px-4 py-3 rounded-xl border text-left transition-all duration-150"
+      disabled={disabled}
+      className={cn(
+        "w-full flex items-center justify-between px-4 py-3 rounded-xl border text-left transition-all duration-150",
+        disabled && "opacity-50 cursor-not-allowed"
+      )}
       style={{
         background: selected ? `${color}12` : 'rgba(255,255,255,0.03)',
         borderColor: selected ? `${color}40` : 'rgba(255,255,255,0.07)',

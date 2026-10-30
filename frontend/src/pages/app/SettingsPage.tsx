@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
-import { Cpu, Database, Globe, Info, Eye, EyeOff, CheckCircle2, Loader2, AlertCircle, ExternalLink } from 'lucide-react'
-import { getSettings, saveSettings } from '../../lib/api'
+import { Cpu, Database, Globe, Info, Eye, EyeOff, CheckCircle2, Loader2, AlertCircle, ExternalLink, Trash2 } from 'lucide-react'
+import { getSettings, saveSettings, getUserOpenRouterKey, setUserOpenRouterKey } from '../../lib/api'
 
 export default function SettingsPage() {
   // OpenRouter key state
@@ -11,11 +11,16 @@ export default function SettingsPage() {
   const [saveSuccess, setSaveSuccess] = useState(false)
   const [saveError, setSaveError] = useState('')
   const [configured, setConfigured] = useState(false)
+  const [ollamaAvailable, setOllamaAvailable] = useState(false)
   const [settingsLoaded, setSettingsLoaded] = useState(false)
 
   useEffect(() => {
+    const existingKey = getUserOpenRouterKey()
+    if (existingKey) {
+      setConfigured(true)
+    }
     getSettings().then(d => {
-      setConfigured(d.openrouter_configured)
+      setOllamaAvailable(d.ollama_available)
       setSettingsLoaded(true)
     }).catch(() => setSettingsLoaded(true))
   }, [])
@@ -27,16 +32,24 @@ export default function SettingsPage() {
     setSaveError('')
     setSaveSuccess(false)
     try {
-      const res = await saveSettings({ openrouter_api_key: keyInput.trim() })
-      setConfigured(res.openrouter_configured)
+      await saveSettings({ openrouter_api_key: keyInput.trim() })
+      setUserOpenRouterKey(keyInput.trim())
+      setConfigured(true)
       setKeyInput('')
       setSaveSuccess(true)
       setTimeout(() => setSaveSuccess(false), 3000)
-    } catch {
-      setSaveError('Failed to save. Make sure the backend is running.')
+    } catch (err: any) {
+      const msg = err?.response?.data?.detail || 'Failed to validate key. Please check your key at openrouter.ai/keys.'
+      setSaveError(msg)
     } finally {
       setSaving(false)
     }
+  }
+
+  const handleClearKey = () => {
+    setUserOpenRouterKey('')
+    setConfigured(false)
+    setKeyInput('')
   }
 
   return (
@@ -46,12 +59,12 @@ export default function SettingsPage() {
         <p className="text-sm text-slate-400">Configure models, API keys, and workspace options</p>
       </motion.div>
 
-      {/* ── OpenRouter API Key ── */}
-      <SettingsSection title="OpenRouter API Key" icon={Globe} color="#8B5CF6" delay={0.05}>
+      {/* ── OpenRouter API Key (BYOK) ── */}
+      <SettingsSection title="Bring Your Own Key (BYOK) — OpenRouter" icon={Globe} color="#8B5CF6" delay={0.05}>
         <div className="flex items-start justify-between mb-4">
           <p className="text-xs text-slate-400 leading-relaxed max-w-sm">
-            OpenRouter gives you access to free cloud models (Mistral, Llama, Gemma, Phi-3) without running anything locally.
-            Your key is stored securely in the backend <code className="text-cyan-400">.env</code> file — never exposed to the browser.
+            OpenRouter gives you access to free cloud models (Mistral, Llama, Gemma, Phi-3).
+            Your key is stored securely in your browser's <code className="text-cyan-400">LocalStorage</code> and transmitted per analysis request in memory — never persisted on the server disk or shared across users.
           </p>
           <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer"
             className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg font-semibold flex-shrink-0 ml-4 transition-all hover:opacity-80"
@@ -62,10 +75,17 @@ export default function SettingsPage() {
 
         {/* Current status */}
         {settingsLoaded && (
-          <div className="flex items-center gap-2 mb-4 px-3 py-2 rounded-lg" style={{ background: configured ? 'rgba(16,185,129,0.08)' : 'rgba(255,255,255,0.03)', border: `1px solid ${configured ? 'rgba(16,185,129,0.2)' : 'rgba(255,255,255,0.06)'}` }}>
-            {configured
-              ? <><CheckCircle2 size={13} className="text-emerald-400 flex-shrink-0" /><span className="text-xs text-emerald-300 font-medium">Secured & Active — <code className="text-emerald-400 font-mono tracking-widest text-[11px]">••••••••••••••••</code></span></>
-              : <><AlertCircle size={13} className="text-slate-500 flex-shrink-0" /><span className="text-xs text-slate-500">Not configured — OpenRouter models are locked</span></>}
+          <div className="flex items-center justify-between mb-4 px-3 py-2 rounded-lg" style={{ background: configured ? 'rgba(16,185,129,0.08)' : 'rgba(255,255,255,0.03)', border: `1px solid ${configured ? 'rgba(16,185,129,0.2)' : 'rgba(255,255,255,0.06)'}` }}>
+            <div className="flex items-center gap-2">
+              {configured
+                ? <><CheckCircle2 size={13} className="text-emerald-400 flex-shrink-0" /><span className="text-xs text-emerald-300 font-medium">Secured in Browser LocalStorage — <code className="text-emerald-400 font-mono tracking-widest text-[11px]">••••••••••••••••</code></span></>
+                : <><AlertCircle size={13} className="text-slate-500 flex-shrink-0" /><span className="text-xs text-slate-500">Not configured — Add your free OpenRouter key below</span></>}
+            </div>
+            {configured && (
+              <button onClick={handleClearKey} title="Remove key from browser" className="text-xs text-slate-400 hover:text-rose-400 flex items-center gap-1 transition-colors">
+                <Trash2 size={12} /> Clear
+              </button>
+            )}
           </div>
         )}
 
@@ -76,7 +96,7 @@ export default function SettingsPage() {
               type={showKey ? 'text' : 'password'}
               value={keyInput}
               onChange={e => setKeyInput(e.target.value)}
-              placeholder={configured ? 'Paste new key to replace existing…' : 'Enter API key…'}
+              placeholder={configured ? 'Paste new key to replace existing…' : 'sk-or-v1-...'}
               className="w-full px-3 py-2.5 pr-10 rounded-xl text-sm text-slate-200 placeholder:text-slate-600 outline-none transition-all"
               style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', fontFamily: 'monospace' }}
               onFocus={e => e.target.style.borderColor = 'rgba(139,92,246,0.5)'}
@@ -99,7 +119,7 @@ export default function SettingsPage() {
         {saveSuccess && (
           <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }}
             className="mt-2 flex items-center gap-2 text-xs text-emerald-300">
-            <CheckCircle2 size={12} /> Key saved! OpenRouter models are now available in Analyze.
+            <CheckCircle2 size={12} /> Key saved locally in browser! OpenRouter models are now unlocked in Analyze.
           </motion.div>
         )}
         {saveError && (
@@ -112,16 +132,23 @@ export default function SettingsPage() {
 
       {/* ── Ollama ── */}
       <SettingsSection title="Ollama (Local LLM)" icon={Cpu} color="#06B6D4" delay={0.1}>
+        <div className="flex items-center gap-2 mb-3 px-3 py-2 rounded-lg" style={{ background: ollamaAvailable ? 'rgba(16,185,129,0.08)' : 'rgba(245,158,11,0.08)', border: `1px solid ${ollamaAvailable ? 'rgba(16,185,129,0.2)' : 'rgba(245,158,11,0.2)'}` }}>
+          {ollamaAvailable ? (
+            <><CheckCircle2 size={13} className="text-emerald-400 flex-shrink-0" /><span className="text-xs text-emerald-300 font-medium">Local Ollama Active at <code>localhost:11434</code></span></>
+          ) : (
+            <><AlertCircle size={13} className="text-amber-400 flex-shrink-0" /><span className="text-xs text-amber-300 font-medium">Desktop Only (Offline on Cloud) — In cloud deployments like Render, Ollama does not run in the cloud container. Please use OpenRouter models with your free key above.</span></>
+          )}
+        </div>
         <InfoBox>
-          Ollama runs models 100% locally on your machine. Make sure Ollama is running at{' '}
+          Ollama runs models 100% locally on your machine. When running InsightFlow locally, start Ollama at{' '}
           <code className="text-cyan-400">http://localhost:11434</code>.{' '}
-          <a href="https://ollama.ai" target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:underline">Download Ollama →</a>
+          <a href="https://ollama.ai" target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:underline">Download Ollama Desktop →</a>
         </InfoBox>
         <div className="mt-3 flex flex-col gap-1.5">
           {['ollama/qwen2.5:3b', 'ollama/qwen2.5:7b', 'ollama/llama3:latest'].map(m => (
             <div key={m} className="flex items-center justify-between px-4 py-2.5 rounded-lg" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
               <code className="text-xs text-slate-300">{m}</code>
-              <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: 'rgba(6,182,212,0.12)', color: '#06B6D4' }}>local</span>
+              <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: 'rgba(6,182,212,0.12)', color: '#06B6D4' }}>{ollamaAvailable ? 'local active' : 'desktop only'}</span>
             </div>
           ))}
         </div>
@@ -146,8 +173,8 @@ export default function SettingsPage() {
             ['Backend', 'FastAPI + Uvicorn (port 8000)'],
             ['Auth', 'Firebase Authentication'],
             ['AI Engine', 'CrewAI with 6 sequential agents'],
-            ['Local LLM', 'Ollama (runs on your machine)'],
-            ['Cloud LLM', 'OpenRouter (free tier available)'],
+            ['Local LLM', 'Ollama (runs locally on your desktop)'],
+            ['Cloud LLM', 'OpenRouter (BYOK - Bring Your Own Free Key)'],
             ['Reports', 'ReportLab PDF + Markdown'],
           ].map(([k, v]) => (
             <div key={k} className="flex items-start justify-between gap-4 py-1.5 border-b last:border-0" style={{ borderColor: 'rgba(255,255,255,0.04)' }}>

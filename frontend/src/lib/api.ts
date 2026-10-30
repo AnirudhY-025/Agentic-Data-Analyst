@@ -16,9 +16,32 @@ export interface AnalyzeRequest {
   dataset_name: string
   question: string
   model: string
+  openrouter_api_key?: string | null
   date_column?: string | null
   metric_column?: string | null
   group_column?: string | null
+}
+
+export const USER_OPENROUTER_KEY_STORAGE = 'insightflow_openrouter_api_key'
+
+export const getUserOpenRouterKey = (): string => {
+  try {
+    return localStorage.getItem(USER_OPENROUTER_KEY_STORAGE)?.trim() || ''
+  } catch {
+    return ''
+  }
+}
+
+export const setUserOpenRouterKey = (key: string): void => {
+  try {
+    if (key.trim()) {
+      localStorage.setItem(USER_OPENROUTER_KEY_STORAGE, key.trim())
+    } else {
+      localStorage.removeItem(USER_OPENROUTER_KEY_STORAGE)
+    }
+  } catch {
+    /* ignore storage errors */
+  }
 }
 
 export const getDatasets = () => api.get<{ datasets: Dataset[] }>('/datasets').then(r => r.data)
@@ -39,8 +62,16 @@ export function createWorkflowSocket(
 ): WebSocket {
   const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
   const userId = auth?.currentUser?.uid || 'default'
+
+  // Inject user's local OpenRouter API key if running an OpenRouter model
+  const payload = { ...request }
+  if (payload.model.startsWith('openrouter/') && !payload.openrouter_api_key) {
+    const key = getUserOpenRouterKey()
+    if (key) payload.openrouter_api_key = key
+  }
+
   const ws = new WebSocket(`${proto}://${window.location.host}/ws/workflow?user_id=${userId}`)
-  ws.onopen = () => ws.send(JSON.stringify(request))
+  ws.onopen = () => ws.send(JSON.stringify(payload))
   ws.onmessage = (e) => {
     try { onEvent(JSON.parse(e.data)) } catch { /* ignore */ }
   }
@@ -78,10 +109,10 @@ export interface ModelEntry { id: string; label: string; provider: string; free:
 export interface ModelsResponse {
   ollama: ModelEntry[]
   openrouter: ModelEntry[]
-  openrouter_configured: boolean
+  ollama_available: boolean
 }
 export const getModels = () => api.get<ModelsResponse>('/models').then(r => r.data)
 export const getSettings = () =>
-  api.get<{ openrouter_configured: boolean; openrouter_key_preview: string | null; ollama_base_url: string }>('/settings').then(r => r.data)
+  api.get<{ ollama_available: boolean; ollama_base_url: string }>('/settings').then(r => r.data)
 export const saveSettings = (body: { openrouter_api_key: string }) =>
-  api.post<{ success: boolean; openrouter_configured: boolean }>('/settings', body).then(r => r.data)
+  api.post<{ success: boolean; valid: boolean }>('/settings', body).then(r => r.data)
