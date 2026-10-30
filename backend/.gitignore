@@ -21,6 +21,7 @@ analysis/
 *.csv
 *.xlsx
 *.pkl
+!tests/fixtures/**
 
 # Logs
 *.log

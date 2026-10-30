@@ -35,6 +35,7 @@ data/
 outputs/
 charts/
 reports/
+!backend/tests/fixtures/**
 
 # OS files
 .DS_Store
