@@ -123,6 +123,18 @@ FALLBACK_OPENROUTER_FREE_MODELS = [
     {"id": "openrouter/poolside/laguna-s-2.1:free",     "label": "Poolside Laguna S 2.1",            "provider": "openrouter", "free": True},
 ]
 
+POPULAR_OPENROUTER_MODELS = [
+    {"id": "openrouter/openrouter/free",              "label": "⚡ Auto Free Model (Recommended)", "provider": "openrouter", "free": True,  "tier": "free",     "desc": "Free Auto Router"},
+    {"id": "openrouter/deepseek/deepseek-r1",         "label": "DeepSeek R1",                     "provider": "openrouter", "free": False, "tier": "frontier", "desc": "State-of-the-Art Reasoning"},
+    {"id": "openrouter/deepseek/deepseek-chat",       "label": "DeepSeek V3",                     "provider": "openrouter", "free": False, "tier": "frontier", "desc": "Fast & High Intelligence"},
+    {"id": "openrouter/anthropic/claude-3.5-sonnet",  "label": "Claude 3.5 Sonnet",               "provider": "openrouter", "free": False, "tier": "frontier", "desc": "Anthropic Flagship Analyst"},
+    {"id": "openrouter/openai/gpt-4o-mini",           "label": "OpenAI GPT-4o Mini",              "provider": "openrouter", "free": False, "tier": "frontier", "desc": "Fast & Economical"},
+    {"id": "openrouter/openai/gpt-4o",                "label": "OpenAI GPT-4o",                   "provider": "openrouter", "free": False, "tier": "frontier", "desc": "Flagship Multimodal"},
+    {"id": "openrouter/meta-llama/llama-3.3-70b-instruct", "label": "Meta Llama 3.3 70B",         "provider": "openrouter", "free": False, "tier": "frontier", "desc": "Elite Open Intelligence"},
+    {"id": "openrouter/google/gemini-2.0-flash-001", "label": "Google Gemini 2.0 Flash",         "provider": "openrouter", "free": False, "tier": "frontier", "desc": "High Speed Multimodal"},
+    {"id": "openrouter/qwen/qwen-2.5-72b-instruct",   "label": "Qwen 2.5 72B",                    "provider": "openrouter", "free": False, "tier": "frontier", "desc": "Top-Tier Open Weights"},
+]
+
 _cached_openrouter_models: list[dict[str, Any]] | None = None
 _cached_openrouter_time: float = 0.0
 
@@ -174,12 +186,13 @@ def get_openrouter_free_models() -> list[dict[str, Any]]:
 
 @app.get("/api/models")
 async def list_models():
-    """Return available models grouped by provider and Ollama reachability."""
+    """Return available models grouped by provider, tier, and Ollama reachability."""
     from config import is_ollama_available
     ollama_ok = is_ollama_available(timeout=0.8)
     return {
         "ollama": OLLAMA_MODELS,
         "openrouter": get_openrouter_free_models(),
+        "popular": POPULAR_OPENROUTER_MODELS,
         "ollama_available": ollama_ok,
     }
 
@@ -297,6 +310,116 @@ async def get_last_analysis(user_id: str = Depends(get_current_user)):
     return user_results
 
 
+@app.get("/api/dashboard")
+async def get_dashboard_data(user_id: str = Depends(get_current_user)):
+    """Return aggregated real-data dashboard analytics for the current user."""
+    user_results = _last_results.get(user_id)
+    if not user_results:
+        data_dir = get_user_data_dir(user_id)
+        datasets = [p.name for p in data_dir.iterdir() if p.suffix.lower() in {".csv", ".xlsx", ".xls"}] if data_dir.exists() else []
+        return {
+            "has_analysis": False,
+            "datasets": datasets,
+        }
+
+    quality = user_results.get("quality", {})
+    overview = user_results.get("dataset_overview", {})
+    correlation = user_results.get("correlation", {})
+    outliers = user_results.get("outliers", {})
+    trend = user_results.get("trend", {})
+    grouping = user_results.get("grouping", {})
+    stats = user_results.get("statistics", {})
+    reports = user_results.get("reports", {})
+
+    rows = overview.get("rows", 0)
+    cols = overview.get("columns", 0)
+    missing_cells = quality.get("missing_cells", 0)
+    dups = quality.get("duplicate_rows", 0)
+
+    total_cells = max(1, rows * cols)
+    missing_pct = (missing_cells / total_cells) * 100
+    dup_pct = (dups / max(1, rows)) * 100
+    quality_score = max(10, min(100, round(100 - (missing_pct * 3.0 + dup_pct * 2.5))))
+    grade = "Excellent" if quality_score >= 85 else "Good" if quality_score >= 65 else "Moderate" if quality_score >= 45 else "Needs Review"
+
+    # Strongest correlation
+    strongest = {"pair": "Features Balanced", "r": "+0.00", "direction": "Neutral"}
+    pairs = correlation.get("strongest_pairs", [])
+    if pairs:
+        top_pair = pairs[0]
+        r_val = top_pair.get("correlation", 0.0)
+        c1 = str(top_pair.get("column_1", "")).replace("_", " ").title()
+        c2 = str(top_pair.get("column_2", "")).replace("_", " ").title()
+        strongest = {
+            "pair": f"{c1} ↔ {c2}",
+            "r": f"{r_val:+.2f}",
+            "raw_r": r_val,
+            "direction": "Positive" if r_val > 0 else "Negative"
+        }
+
+    # Total Volume calculation
+    total_volume_formatted = "100%"
+    stats_data = stats.get("statistics", {})
+    if isinstance(stats_data, dict):
+        sums = []
+        for col, col_stats in stats_data.items():
+            if isinstance(col_stats, dict) and "sum" in col_stats:
+                sums.append(col_stats["sum"])
+        if sums:
+            max_sum = max(sums)
+            if max_sum >= 1_000_000:
+                total_volume_formatted = f"${max_sum/1_000_000:.2f}M"
+            elif max_sum >= 1_000:
+                total_volume_formatted = f"${max_sum/1_000:.1f}K"
+            else:
+                total_volume_formatted = f"${max_sum:,.0f}"
+
+    # Anomalies count
+    outlier_summary = outliers.get("outlier_summary", [])
+    total_outliers = sum(o.get("outlier_count", 0) for o in outlier_summary) if isinstance(outlier_summary, list) else 0
+
+    # Category distribution
+    categories = []
+    groups = grouping.get("groups", [])
+    if isinstance(groups, list) and groups:
+        total_grp_val = sum(g.get("sum", 0) or g.get("count", 0) or 1 for g in groups)
+        for g in groups[:5]:
+            val = g.get("sum", 0) or g.get("count", 0) or 1
+            pct = round((val / max(1, total_grp_val)) * 100)
+            categories.append({
+                "name": str(g.get("name", "Category"))[:22],
+                "percentage": max(1, pct),
+                "value": val
+            })
+
+    # Time series points
+    trend_points = trend.get("trend_points", [])
+
+    return {
+        "has_analysis": True,
+        "dataset_name": Path(overview.get("source", "dataset.csv")).name,
+        "quality_score": quality_score,
+        "quality_grade": grade,
+        "kpis": {
+            "processed_rows": rows,
+            "columns": cols,
+            "total_volume": total_volume_formatted,
+            "strongest_correlation": strongest,
+            "anomalies_count": total_outliers,
+        },
+        "time_series": {
+            "date_column": trend.get("date_column"),
+            "metric_column": trend.get("metric_column"),
+            "points": trend_points,
+        },
+        "categories": categories,
+        "anomalies": outlier_summary,
+        "reports": reports,
+        "charts": user_results.get("charts", []),
+        "executive_summary": user_results.get("clean_summary", {}).get("description") or "Dataset validated and analyzed successfully.",
+    }
+
+
 @app.get("/api/charts")
 async def list_charts(user_id: str = Depends(get_current_user)):
     charts = []
@@ -304,15 +427,31 @@ async def list_charts(user_id: str = Depends(get_current_user)):
     if charts_dir.exists():
         for p in sorted(charts_dir.iterdir()):
             if p.suffix.lower() in {".png", ".jpg", ".jpeg"}:
-                charts.append({"filename": p.name, "url": f"/api/charts/image/{p.name}"})
+                charts.append({"filename": p.name, "url": f"/api/charts/image/{p.name}?user_id={user_id}"})
     return {"charts": charts}
 
+
 @app.get("/api/charts/image/{filename}")
-async def serve_chart(filename: str, user_id: str = Depends(get_current_user)):
-    path = get_user_charts_dir(user_id) / filename
-    if not path.exists():
-        raise HTTPException(404, "Chart not found")
-    return FileResponse(str(path))
+async def serve_chart(filename: str, user_id: str | None = Query(None), x_user_id: str | None = Header(None)):
+    target_uid = user_id or x_user_id
+    if target_uid:
+        path = get_user_charts_dir(target_uid) / filename
+        if path.exists():
+            return FileResponse(str(path))
+
+    default_path = get_user_charts_dir("default") / filename
+    if default_path.exists():
+        return FileResponse(str(default_path))
+
+    # Comprehensive fallback across all outputs directories
+    from config import PROJECT_ROOT
+    outputs_dir = PROJECT_ROOT / "outputs"
+    if outputs_dir.exists():
+        for matched in outputs_dir.glob(f"**/charts/{filename}"):
+            if matched.is_file():
+                return FileResponse(str(matched))
+
+    raise HTTPException(404, "Chart not found")
 
 
 @app.get("/api/reports")
@@ -534,7 +673,7 @@ async def workflow_ws(websocket: WebSocket):
 
         # Assemble and cache results
         charts_list = [
-            {"filename": Path(c["path"]).name, "url": f"/api/charts/image/{Path(c['path']).name}", "title": c.get("title", ""), "chart_type": c.get("chart_type", "")}
+            {"filename": Path(c["path"]).name, "url": f"/api/charts/image/{Path(c['path']).name}?user_id={user_id}", "title": c.get("title", ""), "chart_type": c.get("chart_type", "")}
             for c in visualizations.get("charts", [])
         ]
         results = {

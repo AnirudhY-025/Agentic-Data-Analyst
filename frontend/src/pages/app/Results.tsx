@@ -189,7 +189,19 @@ function ChartsPanel({ charts }: { charts: any[] }) {
     <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
       {charts.map(c => (
         <div key={c.filename} className="rounded-2xl border overflow-hidden" style={{ background: 'rgba(13,22,39,0.9)', borderColor: 'rgba(255,255,255,0.07)' }}>
-          <img src={c.url} alt={c.title} className="w-full object-contain" style={{ maxHeight: 340 }} />
+          <img
+            src={c.url}
+            alt={c.title || c.filename}
+            className="w-full object-contain bg-black/20"
+            style={{ maxHeight: 340, minHeight: 180 }}
+            onError={(e) => {
+              const img = e.currentTarget
+              if (!img.dataset.retried) {
+                img.dataset.retried = 'true'
+                img.src = `/api/charts/image/${c.filename}`
+              }
+            }}
+          />
           <div className="px-4 py-3 border-t" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
             <div className="text-xs font-semibold text-slate-300">{c.title || c.filename}</div>
             <div className="text-xs text-slate-500">{c.chart_type}</div>

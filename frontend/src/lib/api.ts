@@ -86,7 +86,33 @@ export const uploadDataset = (file: File) => {
 export const getPreview = (name: string) => api.get(`/datasets/${encodeURIComponent(name)}/preview`).then(r => r.data)
 export const getColumns = (name: string) => api.get(`/datasets/${encodeURIComponent(name)}/columns`).then(r => r.data)
 export const getAnalysis = () => api.get('/analysis').then(r => r.data)
+export const getDashboardData = () => api.get<DashboardData>('/dashboard').then(r => r.data)
 export const getCharts = () => api.get<{ charts: { filename: string; url: string; title: string }[] }>('/charts').then(r => r.data)
+
+export interface DashboardData {
+  has_analysis: boolean
+  datasets?: string[]
+  dataset_name?: string
+  quality_score?: number
+  quality_grade?: string
+  kpis?: {
+    processed_rows: number
+    columns: number
+    total_volume: string
+    strongest_correlation: { pair: string; r: string; raw_r?: number; direction: string }
+    anomalies_count: number
+  }
+  time_series?: {
+    date_column: string | null
+    metric_column: string | null
+    points: { period: string; value: number }[]
+  }
+  categories?: { name: string; percentage: number; value: number }[]
+  anomalies?: { column: string; lower_bound: number; upper_bound: number; outlier_count: number; outlier_rate: number }[]
+  reports?: { markdown: string; pdf: string }
+  charts?: { filename: string; url: string; title: string; chart_type: string }[]
+  executive_summary?: string
+}
 export const getReports = () => api.get<{ reports: { filename: string; format: string; size: number; url: string }[] }>('/reports').then(r => r.data)
 export const getReportContent = (filename: string) => api.get(`/reports/${encodeURIComponent(filename)}/content`).then(r => r.data)
 
@@ -139,11 +165,12 @@ export interface AnalysisResults {
 }
 
 // ── Models & Settings ──────────────────────────────────────────────────────
-export interface ModelEntry { id: string; label: string; provider: string; free: boolean }
+export interface ModelEntry { id: string; label: string; provider: string; free: boolean; tier?: string; desc?: string }
 export interface ModelsResponse {
   standard?: ModelEntry
   ollama: ModelEntry[]
   openrouter: ModelEntry[]
+  popular?: ModelEntry[]
   ollama_available: boolean
 }
 export const getModels = () => api.get<ModelsResponse>('/models').then(r => r.data)

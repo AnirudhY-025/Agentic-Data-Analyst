@@ -19,6 +19,9 @@ export default function Analyze() {
   // Model catalog and BYOK state
   const [ollamaModels, setOllamaModels] = useState<ModelEntry[]>([])
   const [openrouterModels, setOpenrouterModels] = useState<ModelEntry[]>([])
+  const [popularModels, setPopularModels] = useState<ModelEntry[]>([])
+  const [openrouterCategory, setOpenrouterCategory] = useState<'free' | 'frontier' | 'custom'>('free')
+  const [customModelInput, setCustomModelInput] = useState('')
   const [ollamaAvailable, setOllamaAvailable] = useState(true)
   const [modelsLoaded, setModelsLoaded] = useState(false)
   const [userApiKey, setUserApiKey] = useState(getUserOpenRouterKey())
@@ -41,13 +44,15 @@ export default function Analyze() {
     getModels().then(d => {
       const oModels = d.ollama || []
       const orModels = d.openrouter || []
+      const popModels = d.popular || []
       setOllamaModels(oModels)
       setOpenrouterModels(orModels)
+      setPopularModels(popModels)
       setOllamaAvailable(d.ollama_available)
       setModelsLoaded(true)
 
       // Ensure model in store is valid against active catalog
-      const allKnown = new Set([...oModels.map(m => m.id), ...orModels.map(m => m.id)])
+      const allKnown = new Set([...oModels.map(m => m.id), ...orModels.map(m => m.id), ...popModels.map(m => m.id)])
       if (!allKnown.has(model) && !model.startsWith('ollama/')) {
         if (orModels.length > 0) {
           setModel(orModels[0].id)
@@ -157,6 +162,27 @@ export default function Analyze() {
           placeholder="e.g. Why did profit decrease? Show customer trends. Generate an executive report."
           className="w-full px-3 py-2.5 rounded-xl text-sm text-slate-200 outline-none resize-none placeholder:text-slate-600 transition-colors"
           style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)' }} />
+
+        {/* Quick Business Objective Presets */}
+        <div className="mt-2.5 flex items-center gap-1.5 flex-wrap">
+          <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mr-1">Presets:</span>
+          {[
+            { label: '🎯 Revenue Drivers', q: 'Identify primary revenue drivers, cost correlations, and margin risks.' },
+            { label: '📈 Trend Forecast', q: 'Analyze time-series velocity, seasonal patterns, and peak periods.' },
+            { label: '🔍 Audit & Anomalies', q: 'Perform deep data hygiene audit and isolate anomalous outliers.' },
+            { label: '👥 Segment Breakdown', q: 'Break down top category performance and volume concentration.' },
+          ].map(p => (
+            <button
+              key={p.label}
+              type="button"
+              onClick={() => setQuestion(p.q)}
+              className="text-[11px] px-2.5 py-1 rounded-lg border transition-all text-slate-300 hover:text-cyan-300 hover:border-cyan-500/40"
+              style={{ background: 'rgba(255,255,255,0.03)', borderColor: 'rgba(255,255,255,0.08)' }}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
       </SectionCard>
 
       {/* CrewAI Multi-Agent Collaborative Team Showcase */}
@@ -256,9 +282,9 @@ export default function Analyze() {
                       </a>
                     </div>
                     <p className="text-xs text-slate-400 mb-3 leading-relaxed">
-                      To power custom generative LLM reasoning for the CrewAI agents, connect your free OpenRouter API key.
-                      It is kept in your browser's <code className="text-cyan-400">LocalStorage</code> and transmitted per analysis in memory.
-                      <span className="block mt-1 text-slate-300">💡 <em>You can also run the pipeline right now without entering a key—our Agent Crew will execute the full analytical workflow automatically!</em></span>
+                      Connect your free OpenRouter API key to pick from <span className="text-cyan-300 font-medium">Frontier models (DeepSeek, Claude, GPT-4o)</span> or any custom model.
+                      It is kept securely in your browser's <code className="text-cyan-400">LocalStorage</code>.
+                      <span className="block mt-1 text-slate-300">💡 <em>You can also run free models without entering a key!</em></span>
                     </p>
                     <form onSubmit={handleSaveInlineKey} className="flex gap-2">
                       <input
@@ -279,23 +305,123 @@ export default function Analyze() {
                     {inlineKeyError && <div className="mt-2 text-xs text-rose-400">{inlineKeyError}</div>}
                   </div>
                 ) : (
-                  <div className="flex items-center justify-between px-3.5 py-2 rounded-lg" style={{ background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.2)' }}>
+                  <div className="flex items-center justify-between px-3.5 py-2.5 rounded-xl" style={{ background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.2)' }}>
                     <div className="flex items-center gap-2">
-                      <CheckCircle2 size={13} className="text-emerald-400" />
-                      <span className="text-xs text-emerald-300 font-medium">Your OpenRouter Key is Active (Browser LocalStorage)</span>
+                      <CheckCircle2 size={13} className="text-emerald-400 flex-shrink-0" />
+                      <span className="text-xs text-emerald-300 font-medium">OpenRouter Key Active — All Free & Frontier Models Unlocked</span>
                     </div>
                     <button onClick={() => navigate('/app/settings')} className="text-[11px] text-slate-400 hover:text-cyan-400 underline">
-                      Manage / Change
+                      Manage Key
                     </button>
                   </div>
                 )}
 
-                <div className="flex flex-col gap-2">
-                  {openrouterModels.map(m => (
-                    <ModelOption key={m.id} m={m} selected={model === m.id} onSelect={() => setModel(m.id)} color="#8B5CF6" />
-                  ))}
-                  <p className="text-xs text-slate-500 mt-1">All listed models are <span className="text-emerald-400 font-semibold">100% free</span> on OpenRouter.</p>
+                {/* Sub-tabs for Model Selection */}
+                <div className="flex items-center gap-1.5 p-1 rounded-xl border" style={{ background: 'rgba(255,255,255,0.02)', borderColor: 'rgba(255,255,255,0.06)' }}>
+                  {[
+                    { key: 'free', label: '⚡ Free Tier' },
+                    { key: 'frontier', label: '🌟 Frontier & Popular' },
+                    { key: 'custom', label: '✏️ Custom Model ID' },
+                  ].map(tab => {
+                    const isTabActive = openrouterCategory === tab.key
+                    return (
+                      <button
+                        key={tab.key}
+                        type="button"
+                        onClick={() => setOpenrouterCategory(tab.key as any)}
+                        className="flex-1 py-1.5 px-2.5 rounded-lg text-xs font-semibold transition-all flex items-center justify-center gap-1.5"
+                        style={{
+                          background: isTabActive ? 'rgba(139,92,246,0.2)' : 'transparent',
+                          color: isTabActive ? '#C4B5FD' : '#64748B',
+                          border: isTabActive ? '1px solid rgba(139,92,246,0.3)' : '1px solid transparent',
+                        }}>
+                        <span>{tab.label}</span>
+                      </button>
+                    )
+                  })}
                 </div>
+
+                {/* Tab 1: Free Models */}
+                {openrouterCategory === 'free' && (
+                  <div className="flex flex-col gap-2">
+                    {openrouterModels.map(m => (
+                      <ModelOption key={m.id} m={m} selected={model === m.id} onSelect={() => setModel(m.id)} color="#8B5CF6" />
+                    ))}
+                    <p className="text-xs text-slate-500 mt-1">All listed models are <span className="text-emerald-400 font-semibold">100% free</span> on OpenRouter.</p>
+                  </div>
+                )}
+
+                {/* Tab 2: Frontier & Popular Models */}
+                {openrouterCategory === 'frontier' && (
+                  <div className="flex flex-col gap-2">
+                    {popularModels.filter(m => !m.free).map(m => (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => setModel(m.id)}
+                        className="w-full flex items-center justify-between px-4 py-3 rounded-xl border text-left transition-all duration-150"
+                        style={{
+                          background: model === m.id ? 'rgba(139,92,246,0.15)' : 'rgba(255,255,255,0.03)',
+                          borderColor: model === m.id ? 'rgba(139,92,246,0.45)' : 'rgba(255,255,255,0.07)',
+                        }}>
+                        <div className="flex items-center gap-3">
+                          <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: model === m.id ? '#8B5CF6' : 'rgba(255,255,255,0.15)' }} />
+                          <div>
+                            <div className="text-sm font-medium" style={{ color: model === m.id ? '#E2E8F0' : '#94A3B8' }}>{m.label}</div>
+                            {m.desc && <div className="text-[11px] text-slate-500">{m.desc}</div>}
+                          </div>
+                        </div>
+                        <span className="text-xs px-2 py-0.5 rounded-full font-semibold" style={{ background: 'rgba(139,92,246,0.2)', color: '#C4B5FD' }}>Frontier</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {/* Tab 3: Custom Model ID */}
+                {openrouterCategory === 'custom' && (
+                  <div className="p-4 rounded-xl border" style={{ background: 'rgba(255,255,255,0.02)', borderColor: 'rgba(255,255,255,0.08)' }}>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                      Enter Any OpenRouter Model Slug
+                    </label>
+                    <p className="text-xs text-slate-400 mb-3 leading-relaxed">
+                      You can run any model available on OpenRouter (e.g. <code>anthropic/claude-3.7-sonnet</code>, <code>mistralai/mistral-large-2411</code>, <code>meta-llama/llama-3.1-405b-instruct</code>).
+                    </p>
+                    <div className="flex gap-2 mb-3">
+                      <input
+                        type="text"
+                        value={customModelInput}
+                        onChange={e => setCustomModelInput(e.target.value)}
+                        placeholder="e.g. anthropic/claude-3.5-sonnet"
+                        className="flex-1 px-3 py-2 rounded-xl text-xs text-slate-200 outline-none"
+                        style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.12)', fontFamily: 'monospace' }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const trimmed = customModelInput.trim()
+                          if (trimmed) {
+                            const formatted = trimmed.startsWith('openrouter/') ? trimmed : `openrouter/${trimmed}`
+                            setModel(formatted)
+                          }
+                        }}
+                        disabled={!customModelInput.trim()}
+                        className="px-4 py-2 rounded-xl font-bold text-xs text-white transition-all"
+                        style={{
+                          background: customModelInput.trim() ? 'linear-gradient(135deg,#7C3AED,#8B5CF6)' : 'rgba(255,255,255,0.06)',
+                          color: customModelInput.trim() ? '#fff' : '#475569',
+                        }}>
+                        Apply Model
+                      </button>
+                    </div>
+
+                    {model.startsWith('openrouter/') && !openrouterModels.some(m => m.id === model) && !popularModels.some(m => m.id === model) && (
+                      <div className="flex items-center gap-2 px-3 py-2 rounded-lg" style={{ background: 'rgba(139,92,246,0.1)', border: '1px solid rgba(139,92,246,0.3)' }}>
+                        <CheckCircle2 size={13} className="text-purple-400" />
+                        <span className="text-xs text-purple-300 font-mono">Active Custom Model: <strong>{model}</strong></span>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 
