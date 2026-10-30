@@ -4,7 +4,7 @@ import { auth } from './firebase'
 const api = axios.create({ baseURL: '/api' })
 
 api.interceptors.request.use((config) => {
-  const user = auth.currentUser
+  const user = auth?.currentUser
   if (user) {
     config.headers['X-User-ID'] = user.uid
   }
@@ -38,7 +38,7 @@ export function createWorkflowSocket(
   onEvent: (event: WorkflowEvent) => void
 ): WebSocket {
   const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
-  const userId = auth.currentUser?.uid || 'default'
+  const userId = auth?.currentUser?.uid || 'default'
   const ws = new WebSocket(`${proto}://${window.location.host}/ws/workflow?user_id=${userId}`)
   ws.onopen = () => ws.send(JSON.stringify(request))
   ws.onmessage = (e) => {
