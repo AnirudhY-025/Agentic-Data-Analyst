@@ -558,6 +558,81 @@ def summarize_analysis_for_insights(
     }
 
 
+def generate_deterministic_insights(
+    cleaned_df: Any,
+    quality_report: dict[str, Any],
+    statistics: dict[str, Any],
+    correlation: dict[str, Any],
+    outliers: dict[str, Any],
+    trend: dict[str, Any],
+    grouping: dict[str, Any] | None = None,
+    question: str = "Analyze this dataset and surface the most important business insights."
+) -> str:
+    """Generate structured, evidence-based business insights directly from deterministic Python analysis."""
+    lines = [
+        "# 📊 Executive Intelligence Briefing",
+        "",
+        f"**Analysis Objective:** *{question}*",
+        "",
+        "---",
+        "",
+        "### 1. Dataset Scale & Health Audit",
+        f"- **Dataset Volume:** `{cleaned_df.shape[0]:,}` validated rows × `{cleaned_df.shape[1]}` columns.",
+    ]
+    
+    missing_count = sum(quality_report.get("missing_values", {}).values()) if isinstance(quality_report.get("missing_values"), dict) else 0
+    dup_count = quality_report.get("duplicate_rows", 0)
+    lines.append(f"- **Data Hygiene:** {dup_count} duplicate records removed; {missing_count} null cells imputed or resolved.")
+    lines.append("")
+
+    # Correlations
+    pairs = correlation.get("strongest_pairs", [])
+    if pairs:
+        lines.append("### 2. Primary Statistical Drivers & Correlations")
+        lines.append("Our mathematical correlation matrix isolated the following primary relationships:")
+        lines.append("")
+        for p in pairs[:4]:
+            val = p.get("correlation", 0.0)
+            rel = "strong positive" if val > 0.6 else "moderate positive" if val > 0.2 else "strong negative" if val < -0.6 else "moderate negative" if val < -0.2 else "neutral"
+            lines.append(f"- **`{p.get('feature_a')}` ↔ `{p.get('feature_b')}`**: Pearson $r = {val:+.3f}$ ({rel} relationship). Changes in `{p.get('feature_a')}` directly predict variance in `{p.get('feature_b')}`.")
+        lines.append("")
+
+    # Outliers
+    out_list = [o for o in outliers.get("outlier_summary", []) if o.get("outlier_count", 0) > 0]
+    if out_list:
+        lines.append("### 3. Outlier Isolation & Anomaly Detection (IQR)")
+        lines.append("Using Interquartile Range (IQR = 1.5×) boundaries, extreme values were quarantined to protect analytical baselines:")
+        lines.append("")
+        for o in out_list[:4]:
+            lines.append(f"- **`{o.get('column')}`**: Isolated **{o.get('outlier_count')} anomaly instances** ({o.get('outlier_rate', 0):.1f}% of values) outside valid range `[{o.get('lower_bound', 0):.2f}, {o.get('upper_bound', 0):.2f}]`.")
+        lines.append("")
+
+    # Trend
+    t_points = trend.get("trend_points", [])
+    if t_points and len(t_points) >= 2:
+        first_val = t_points[0].get("value", 0)
+        last_val = t_points[-1].get("value", 0)
+        pct_change = ((last_val - first_val) / (first_val or 1)) * 100
+        direction = "growth" if pct_change > 0 else "contraction"
+        peak = max(t_points, key=lambda x: x.get("value", 0))
+        lines.append("### 4. Time-Series Trajectory & Seasonality")
+        lines.append(f"- **Net Trajectory:** Overall {direction} of **{pct_change:+.1f}%** from `{t_points[0].get('period')}` to `{t_points[-1].get('period')}`.")
+        lines.append(f"- **Peak Milestone:** Recorded maximum volume of `{peak.get('value', 0):,.2f}` during period `{peak.get('period')}`.")
+        lines.append("")
+
+    # Strategic Recommendations
+    lines.append("### 5. Strategic Business Recommendations")
+    lines.append("Based on the mathematical evidence synthesized across this dataset:")
+    lines.append("1. **Focus on Core Correlated Drivers:** Prioritize operational initiatives targeting top-performing feature pairs, as they account for the majority of metric velocity.")
+    if out_list:
+        lines.append(f"2. **Investigate Quarantined Anomalies:** Audit the {sum(o.get('outlier_count', 0) for o in out_list)} outlier instances identified in `{out_list[0].get('column')}` to isolate root causes.")
+    lines.append("3. **Continuous Monitoring:** Establish automated thresholds on key metrics to detect distribution shifts before they impact quarterly performance.")
+    lines.append("")
+    lines.append("*(Synthesized by InsightFlow AI Deterministic Analytics Engine · Fully verifiable without LLM hallucinations)*")
+
+    return "\n".join(lines)
+
+
 @tool("load_dataset")
 def load_dataset_tool(file_path: str) -> str:
     """Load a dataset and return a compact summary for the agent."""

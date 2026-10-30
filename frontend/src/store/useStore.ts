@@ -53,7 +53,7 @@ export const useStore = create<AppState>((set) => ({
 
   question: 'Analyze this dataset and surface the most important business insights.',
   setQuestion: (q) => set({ question: q }),
-  model: 'ollama/qwen2.5:3b',
+  model: 'standard',
   setModel: (m) => set({ model: m }),
 
   workflowRunning: false,

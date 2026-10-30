@@ -119,6 +119,7 @@ export interface AnalysisResults {
 // ── Models & Settings ──────────────────────────────────────────────────────
 export interface ModelEntry { id: string; label: string; provider: string; free: boolean }
 export interface ModelsResponse {
+  standard?: ModelEntry
   ollama: ModelEntry[]
   openrouter: ModelEntry[]
   ollama_available: boolean

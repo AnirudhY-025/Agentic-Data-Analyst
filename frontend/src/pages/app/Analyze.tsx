@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Upload, CheckCircle2, AlertCircle, Loader2, ChevronDown, ChevronUp, Play, Cpu, Globe, Lock, ExternalLink } from 'lucide-react'
+import { Upload, CheckCircle2, AlertCircle, Loader2, ChevronDown, ChevronUp, Play, Cpu, Globe, Lock, ExternalLink, Zap, Sparkles } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { getDatasets, getColumns, uploadDataset, createWorkflowSocket, getModels, getUserOpenRouterKey, setUserOpenRouterKey, saveSettings, type WorkflowEvent, type ModelEntry } from '../../lib/api'
 import { useStore } from '../../store/useStore'
@@ -38,13 +38,13 @@ export default function Analyze() {
   useEffect(() => {
     getDatasets().then(d => setDatasets(d.datasets)).catch(() => { })
     getModels().then(d => {
-      setOllamaModels(d.ollama)
-      setOpenrouterModels(d.openrouter)
+      setOllamaModels(d.ollama || [])
+      setOpenrouterModels(d.openrouter || [])
       setOllamaAvailable(d.ollama_available)
       setModelsLoaded(true)
-      // If Ollama is offline (such as on Render cloud host), automatically default to an OpenRouter free model
+      // If Ollama is offline and user previously had an ollama model selected, safely default to standard free engine
       if (!d.ollama_available && model.startsWith('ollama/')) {
-        setModel('openrouter/mistralai/mistral-7b-instruct:free')
+        setModel('standard')
       }
     }).catch(() => setModelsLoaded(true))
   }, [])
@@ -93,17 +93,22 @@ export default function Analyze() {
     if (!selectedDataset) return
     setValidationError('')
 
-    if (model.startsWith('ollama/') && !ollamaAvailable) {
-      setValidationError('Ollama is not running on this server. Please switch to an OpenRouter cloud model with your free key.')
-      return
+    if (model === 'standard') {
+      // 100% Free · No API Key Required
+    } else if (model.startsWith('ollama/')) {
+      if (!ollamaAvailable) {
+        setValidationError('Ollama is not running on this server. Switch to the Standard Engine (No Key Needed) or OpenRouter Cloud AI.')
+        return
+      }
+    } else if (model.startsWith('openrouter/')) {
+      const activeKey = getUserOpenRouterKey()
+      if (!activeKey) {
+        setValidationError('Please enter your free OpenRouter API key above, or switch to "Standard Engine" to run without any key.')
+        return
+      }
     }
 
     const activeKey = getUserOpenRouterKey()
-    if (model.startsWith('openrouter/') && !activeKey) {
-      setValidationError('Please enter your free OpenRouter API key before running the cloud AI model.')
-      return
-    }
-
     startWorkflow()
     createWorkflowSocket({
       dataset_name: selectedDataset,
@@ -119,7 +124,9 @@ export default function Analyze() {
     })
   }
 
-  const selectedProvider = model.startsWith('openrouter/') ? 'openrouter' : 'ollama'
+  const selectedProvider: 'standard' | 'openrouter' | 'ollama' =
+    model === 'standard' ? 'standard' :
+    model.startsWith('openrouter/') ? 'openrouter' : 'ollama'
 
   return (
     <div className="p-6 max-w-3xl mx-auto">
@@ -159,42 +166,91 @@ export default function Analyze() {
           style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)' }} />
       </SectionCard>
 
-      {/* Step 3 — Model */}
-      <SectionCard title="3. AI Model" icon="🤖" delay={0.15}>
+      {/* Step 3 — Analysis Engine / Model */}
+      <SectionCard title="3. Analysis Engine & AI Model" icon="🤖" delay={0.15}>
         {!modelsLoaded ? (
           <div className="skeleton h-28 rounded-xl" />
         ) : (
           <>
-            {/* Provider tabs */}
-            <div className="flex gap-2 mb-4">
+            {/* Engine Tabs */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-4">
               {[
-                { key: 'openrouter', label: 'OpenRouter (Cloud)', icon: Globe, color: '#8B5CF6', badge: userApiKey ? 'Ready' : 'BYOK' },
-                { key: 'ollama', label: 'Ollama (Local)', icon: Cpu, color: '#06B6D4', badge: ollamaAvailable ? 'Local Active' : 'Desktop Only' },
-              ].map(p => (
-                <button key={p.key}
-                  onClick={() => {
-                    const first = p.key === 'ollama' ? ollamaModels[0] : openrouterModels[0]
-                    if (first) setModel(first.id)
-                  }}
-                  className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition-all duration-200 border"
-                  style={{
-                    background: selectedProvider === p.key ? `${p.color}18` : 'rgba(255,255,255,0.03)',
-                    borderColor: selectedProvider === p.key ? `${p.color}40` : 'rgba(255,255,255,0.08)',
-                    color: selectedProvider === p.key ? p.color : '#64748B',
-                  }}>
-                  <p.icon size={13} /> {p.label}
-                  {p.badge && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded font-mono uppercase font-bold"
-                      style={{
-                        background: p.key === 'ollama' && !ollamaAvailable ? 'rgba(245,158,11,0.15)' : 'rgba(255,255,255,0.08)',
-                        color: p.key === 'ollama' && !ollamaAvailable ? '#F59E0B' : 'inherit'
-                      }}>
-                      {p.badge}
-                    </span>
-                  )}
-                </button>
-              ))}
+                { key: 'standard', label: 'Standard Engine', icon: Zap, color: '#10B981', badge: 'Free · Instant' },
+                { key: 'openrouter', label: 'OpenRouter AI', icon: Globe, color: '#8B5CF6', badge: userApiKey ? 'Key Active' : 'Optional BYOK' },
+                { key: 'ollama', label: 'Ollama (Desktop)', icon: Cpu, color: '#06B6D4', badge: ollamaAvailable ? 'Local Active' : 'Desktop Only' },
+              ].map(p => {
+                const isActive = selectedProvider === p.key
+                return (
+                  <button key={p.key}
+                    type="button"
+                    onClick={() => {
+                      setValidationError('')
+                      if (p.key === 'standard') {
+                        setModel('standard')
+                      } else if (p.key === 'openrouter') {
+                        if (!model.startsWith('openrouter/')) {
+                          setModel(openrouterModels[0]?.id || 'openrouter/mistralai/mistral-7b-instruct:free')
+                        }
+                      } else if (p.key === 'ollama') {
+                        if (!model.startsWith('ollama/')) {
+                          setModel(ollamaModels[0]?.id || 'ollama/qwen2.5:3b')
+                        }
+                      }
+                    }}
+                    className="flex flex-col items-start gap-1 p-3 rounded-xl text-left transition-all duration-200 border relative overflow-hidden"
+                    style={{
+                      background: isActive ? `${p.color}15` : 'rgba(255,255,255,0.02)',
+                      borderColor: isActive ? `${p.color}50` : 'rgba(255,255,255,0.08)',
+                      boxShadow: isActive ? `0 0 18px ${p.color}15` : 'none',
+                    }}>
+                    <div className="flex items-center justify-between w-full">
+                      <div className="flex items-center gap-1.5 font-semibold text-xs" style={{ color: isActive ? p.color : '#94A3B8' }}>
+                        <p.icon size={14} /> {p.label}
+                      </div>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded font-mono font-bold"
+                        style={{
+                          background: p.key === 'standard'
+                            ? 'rgba(16,185,129,0.18)'
+                            : p.key === 'ollama' && !ollamaAvailable
+                            ? 'rgba(245,158,11,0.15)'
+                            : 'rgba(255,255,255,0.08)',
+                          color: p.key === 'standard'
+                            ? '#34D399'
+                            : p.key === 'ollama' && !ollamaAvailable
+                            ? '#F59E0B'
+                            : isActive ? p.color : '#64748B'
+                        }}>
+                        {p.badge}
+                      </span>
+                    </div>
+                  </button>
+                )
+              })}
             </div>
+
+            {/* Standard Engine (100% Free · Zero Keys Required) */}
+            {selectedProvider === 'standard' && (
+              <div className="p-4 rounded-xl border flex flex-col gap-3"
+                style={{ background: 'rgba(16,185,129,0.05)', borderColor: 'rgba(16,185,129,0.22)' }}>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 font-semibold text-sm text-emerald-300">
+                    <Sparkles size={16} className="text-emerald-400" />
+                    <span>Instant Analytics Engine (Recommended)</span>
+                  </div>
+                  <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                    ✓ 100% Free · No Keys Needed
+                  </span>
+                </div>
+                <p className="text-xs text-slate-300 leading-relaxed">
+                  No API key, signup, or Ollama installation needed. Automatically performs complete data cleaning, data quality scoring, Pearson correlations, IQR outlier detection, interactive visualizations, and an executive briefing with downloadable PDF.
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1 border-t border-emerald-500/10 text-[11px] text-slate-300">
+                  <div className="flex items-center gap-1.5"><CheckCircle2 size={12} className="text-emerald-400 flex-shrink-0" /> Full 6-Stage Pipeline</div>
+                  <div className="flex items-center gap-1.5"><CheckCircle2 size={12} className="text-emerald-400 flex-shrink-0" /> Zero Key Friction</div>
+                  <div className="flex items-center gap-1.5"><CheckCircle2 size={12} className="text-emerald-400 flex-shrink-0" /> Instant Execution</div>
+                </div>
+              </div>
+            )}
 
             {/* Ollama models */}
             {selectedProvider === 'ollama' && (
@@ -202,24 +258,31 @@ export default function Analyze() {
                 {!ollamaAvailable && (
                   <div className="p-4 rounded-xl border text-sm mb-2" style={{ background: 'rgba(245,158,11,0.06)', borderColor: 'rgba(245,158,11,0.25)', color: '#FCD34D' }}>
                     <div className="flex items-center gap-2 font-semibold mb-1">
-                      <AlertCircle size={14} className="text-amber-400" /> Desktop LLM Offline (Cloud Deployment Detected)
+                      <AlertCircle size={14} className="text-amber-400" /> Local Desktop Ollama Not Connected
                     </div>
                     <div className="text-xs text-amber-200/70 leading-relaxed mb-3">
-                      Ollama runs locally on your desktop machine (<code>localhost:11434</code>) and cannot run inside Render's cloud container.
-                      To run the AI agents on the cloud, please use <strong>OpenRouter (Cloud)</strong> with your free key.
+                      Ollama is designed to run locally on your desktop machine (<code>localhost:11434</code>) and is not available on this cloud server.
+                      You can run your analysis immediately for free with zero setup using the <strong>Standard Engine</strong>, or use OpenRouter Cloud AI.
                     </div>
-                    <button onClick={() => setModel(openrouterModels[0]?.id || 'openrouter/mistralai/mistral-7b-instruct:free')}
-                      className="text-xs px-3.5 py-1.5 rounded-lg font-semibold text-white transition-all shadow-md"
-                      style={{ background: 'linear-gradient(135deg,#7C3AED,#8B5CF6)' }}>
-                      Switch to OpenRouter Cloud →
-                    </button>
+                    <div className="flex flex-wrap gap-2">
+                      <button type="button" onClick={() => setModel('standard')}
+                        className="text-xs px-3.5 py-1.5 rounded-lg font-bold text-slate-900 transition-all shadow-md"
+                        style={{ background: 'linear-gradient(135deg,#10B981,#34D399)' }}>
+                        ⚡ Use Free Standard Engine (No Key Needed)
+                      </button>
+                      <button type="button" onClick={() => setModel(openrouterModels[0]?.id || 'openrouter/mistralai/mistral-7b-instruct:free')}
+                        className="text-xs px-3.5 py-1.5 rounded-lg font-semibold text-white transition-all border border-purple-500/30"
+                        style={{ background: 'rgba(139,92,246,0.18)' }}>
+                        OpenRouter Cloud →
+                      </button>
+                    </div>
                   </div>
                 )}
                 {ollamaModels.map(m => (
                   <ModelOption key={m.id} m={m} selected={model === m.id} onSelect={() => setModel(m.id)} color="#06B6D4" disabled={!ollamaAvailable} />
                 ))}
                 <p className="text-xs text-slate-500 mt-1">
-                  {ollamaAvailable ? 'Connected to local Ollama at localhost:11434' : 'Ollama requires a desktop installation to run locally'}
+                  {ollamaAvailable ? 'Connected to local Ollama at localhost:11434' : 'Ollama requires a desktop installation to run locally on your machine'}
                 </p>
               </div>
             )}
@@ -374,17 +437,31 @@ export default function Analyze() {
       <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.25 }}>
         <motion.button
           disabled={!selectedDataset || workflowRunning}
-          whileHover={!workflowRunning && selectedDataset ? { scale: 1.02, y: -2 } : {}}
-          whileTap={!workflowRunning && selectedDataset ? { scale: 0.98 } : {}}
+          whileHover={!workflowRunning && selectedDataset ? { scale: 1.01, y: -1 } : {}}
+          whileTap={!workflowRunning && selectedDataset ? { scale: 0.99 } : {}}
           onClick={runWorkflow}
           className="w-full flex items-center justify-center gap-2 py-4 rounded-2xl font-bold text-sm transition-all duration-200"
           style={{
-            background: selectedDataset && !workflowRunning ? 'linear-gradient(135deg,#0891B2 0%,#06B6D4 55%,#38BDF8 100%)' : 'rgba(255,255,255,0.06)',
+            background: selectedDataset && !workflowRunning
+              ? model === 'standard'
+                ? 'linear-gradient(135deg,#059669 0%,#10B981 55%,#34D399 100%)'
+                : 'linear-gradient(135deg,#0891B2 0%,#06B6D4 55%,#38BDF8 100%)'
+              : 'rgba(255,255,255,0.06)',
             color: selectedDataset && !workflowRunning ? '#020D14' : '#475569',
-            boxShadow: selectedDataset && !workflowRunning ? '0 0 28px rgba(6,182,212,0.35)' : 'none',
+            boxShadow: selectedDataset && !workflowRunning
+              ? model === 'standard'
+                ? '0 0 28px rgba(16,185,129,0.35)'
+                : '0 0 28px rgba(6,182,212,0.35)'
+              : 'none',
           }}>
           {workflowRunning ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />}
-          {workflowRunning ? 'Running Agentic Workflow…' : '🚀 Run Agentic Workflow'}
+          {workflowRunning
+            ? 'Running Agentic Pipeline…'
+            : model === 'standard'
+            ? '🚀 Run Analysis (No Key Needed · Free)'
+            : model.startsWith('openrouter/')
+            ? '🤖 Run Cloud AI Analysis'
+            : '💻 Run Local Ollama Analysis'}
         </motion.button>
       </motion.div>
     </div>

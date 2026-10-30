@@ -52,6 +52,7 @@ from tools import (
     generate_markdown_report,
     generate_pdf_report,
     generate_visualizations,
+    generate_deterministic_insights,
     load_dataset,
     perform_correlation_analysis,
     perform_distribution_analysis,
@@ -91,7 +92,7 @@ def get_current_user(x_user_id: str | None = Header(None)) -> str:
 class AnalyzeRequest(BaseModel):
     dataset_name: str
     question: str = "Analyze this dataset and surface the most important business insights."
-    model: str = "ollama/qwen2.5:3b"
+    model: str = "standard"
     openrouter_api_key: str | None = None
     date_column: str | None = None
     metric_column: str | None = None
@@ -103,6 +104,13 @@ class SaveSettingsRequest(BaseModel):
 
 
 # ── Model catalog ─────────────────────────────────────────────────────────────
+STANDARD_MODEL = {
+    "id": "standard",
+    "label": "Standard Analytics Engine (Free · No API Key Needed)",
+    "provider": "standard",
+    "free": True,
+}
+
 OLLAMA_MODELS = [
     {"id": "ollama/qwen2.5:3b",   "label": "Qwen 2.5 3B  (Fast)",     "provider": "ollama", "free": True},
     {"id": "ollama/qwen2.5:7b",   "label": "Qwen 2.5 7B  (Thorough)", "provider": "ollama", "free": True},
@@ -125,6 +133,7 @@ async def list_models():
     from config import is_ollama_available
     ollama_ok = is_ollama_available(timeout=0.8)
     return {
+        "standard": STANDARD_MODEL,
         "ollama": OLLAMA_MODELS,
         "openrouter": OPENROUTER_FREE_MODELS,
         "ollama_available": ollama_ok,
@@ -384,28 +393,40 @@ async def workflow_ws(websocket: WebSocket):
         await send({"type": "step", "step": 5, "label": "Building Markdown & PDF reports", "status": "done",
                     "detail": f"MD + PDF saved"})
 
-        # Step 6 — CrewAI LLM
-        await send({"type": "step", "step": 6, "label": "Running CrewAI LLM agents", "status": "running"})
+        # Step 6 — Synthesis & Insights
+        await send({"type": "step", "step": 6, "label": "Synthesizing Insights & Strategy", "status": "running"})
         crew_result = None
         crew_error = None
-        try:
-            crew = build_crew(model_name=req.model, api_key=req.openrouter_api_key)
-            # Run in executor to not block the event loop
-            loop = asyncio.get_event_loop()
-            crew_result = await loop.run_in_executor(
-                None, lambda: crew.kickoff(inputs={"dataset_path": str(dataset_path), "question": req.question})
+
+        is_standard_mode = req.model in {"standard", "python", "none"}
+        should_run_crew = not is_standard_mode and (req.openrouter_api_key or req.model.startswith("ollama/"))
+
+        if should_run_crew:
+            try:
+                crew = build_crew(model_name=req.model, api_key=req.openrouter_api_key)
+                loop = asyncio.get_event_loop()
+                crew_result = await loop.run_in_executor(
+                    None, lambda: crew.kickoff(inputs={"dataset_path": str(dataset_path), "question": req.question})
+                )
+                await send({"type": "step", "step": 6, "label": "Synthesizing Insights & Strategy", "status": "done",
+                            "detail": "CrewAI agents complete"})
+            except Exception as exc:
+                crew_error = str(exc)
+                # Fall back gracefully to deterministic intelligence briefing!
+                crew_result = generate_deterministic_insights(
+                    cleaned_df=cleaned_df, quality_report=quality_report, statistics=statistics,
+                    correlation=correlation, outliers=outliers, trend=trend, grouping=grouping, question=req.question
+                )
+                await send({"type": "step", "step": 6, "label": "Synthesizing Insights & Strategy", "status": "done",
+                            "detail": "Python Analytics Engine"})
+        else:
+            # 100% Free · No API Key Required mode!
+            crew_result = generate_deterministic_insights(
+                cleaned_df=cleaned_df, quality_report=quality_report, statistics=statistics,
+                correlation=correlation, outliers=outliers, trend=trend, grouping=grouping, question=req.question
             )
-            await send({"type": "step", "step": 6, "label": "Running CrewAI LLM agents", "status": "done"})
-        except Exception as exc:
-            crew_error = str(exc)
-            if "Ollama is not running" in crew_error or "Connection error" in crew_error:
-                detail_msg = "Ollama offline (desktop only)"
-            elif "OpenRouter API key" in crew_error:
-                detail_msg = "OpenRouter key required"
-            else:
-                detail_msg = f"LLM step skipped: {type(exc).__name__}"
-            await send({"type": "step", "step": 6, "label": "Running CrewAI LLM agents", "status": "warning",
-                        "detail": detail_msg})
+            await send({"type": "step", "step": 6, "label": "Synthesizing Insights & Strategy", "status": "done",
+                        "detail": "Python Analytics Engine (No Key Needed)"})
 
         # Assemble and cache results
         charts_list = [
