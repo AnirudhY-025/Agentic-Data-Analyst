@@ -3,7 +3,7 @@ import { auth } from './firebase'
 
 const api = axios.create({ baseURL: '/api' })
 
-const getActiveUserId = (): string => {
+export const getActiveUserId = (): string => {
   if (auth?.currentUser?.uid) return auth.currentUser.uid
   try {
     const saved = localStorage.getItem('insightflow_guest_user')

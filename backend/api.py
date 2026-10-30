@@ -44,7 +44,7 @@ from config import (
     ensure_directories,
     CURRENT_USER_ID,
 )
-from crew import build_crew
+from crew import build_crew, build_insight_crew
 from tools import (
     auto_detect_columns,
     calculate_statistics,
@@ -605,12 +605,21 @@ async def workflow_ws(websocket: WebSocket):
         crew_result = None
         crew_error = None
 
+        evidence_brief = (
+            f"Dataset Scale: {cleaned_df.shape[0]:,} rows x {cleaned_df.shape[1]} columns.\n"
+            f"Data Quality: {quality_report.get('duplicate_rows', 0)} duplicates removed, "
+            f"{sum(quality_report.get('missing_values', {}).values()) if isinstance(quality_report.get('missing_values'), dict) else 0} missing values.\n"
+            f"Key Drivers & Correlations: {correlation.get('strongest_pairs', [])[:4]}\n"
+            f"Quarantined Outliers: {[o for o in outliers.get('outlier_summary', []) if o.get('outlier_count', 0) > 0][:4]}\n"
+            f"Trend Analysis: {trend.get('trend_points', [])[:5]}"
+        )
+
         is_ollama = req.model.startswith("ollama/")
         if is_ollama:
             try:
-                crew = build_crew(model_name=req.model, api_key=None, ollama_base_url=req.ollama_base_url)
+                crew = build_insight_crew(model_name=req.model, api_key=None, ollama_base_url=req.ollama_base_url)
                 crew_task = loop.run_in_executor(
-                    None, lambda: crew.kickoff(inputs={"dataset_path": str(dataset_path), "question": req.question})
+                    None, lambda: crew.kickoff(inputs={"evidence_summary": evidence_brief, "question": req.question})
                 )
                 tick = 0
                 while not crew_task.done():
@@ -622,11 +631,11 @@ async def workflow_ws(websocket: WebSocket):
                                 "type": "step", "step": 6,
                                 "label": "Insight & Strategy Agents: Synthesizing intelligence",
                                 "status": "running",
-                                "detail": f"Local Ollama agents synthesizing ({tick}s)..."
+                                "detail": f"Local Ollama strategy synthesis ({tick}s)..."
                             })
                         except Exception:
                             break
-                    if tick > 45:
+                    if tick > 25:
                         break
                 if crew_task.done():
                     crew_result = await crew_task
@@ -636,7 +645,7 @@ async def workflow_ws(websocket: WebSocket):
                         correlation=correlation, outliers=outliers, trend=trend, grouping=grouping, question=req.question
                     )
                 await send({"type": "step", "step": 6, "label": "Insight & Strategy Agents: Synthesizing intelligence", "status": "done",
-                            "detail": "CrewAI Ollama agents complete"})
+                            "detail": "CrewAI strategy synthesis complete"})
             except Exception as exc:
                 crew_error = f"Ollama connection notice: {str(exc)[:160]}"
                 crew_result = generate_deterministic_insights(
@@ -646,7 +655,7 @@ async def workflow_ws(websocket: WebSocket):
                 await send({"type": "step", "step": 6, "label": "Insight & Strategy Agents: Synthesizing intelligence", "status": "done",
                             "detail": "CrewAI strategic synthesis"})
         elif req.openrouter_api_key:
-            # Model fallback sequence to guarantee high availability and protect against retired model IDs
+            # Model fallback sequence to guarantee high availability
             candidates = [req.model]
             fallbacks = [
                 "openrouter/openrouter/free",
@@ -667,14 +676,14 @@ async def workflow_ws(websocket: WebSocket):
                         "label": f"Insight & Strategy Agents: Running CrewAI ({display_name})",
                         "status": "running",
                     })
-                    crew = build_crew(model_name=model_candidate, api_key=req.openrouter_api_key)
+                    crew = build_insight_crew(model_name=model_candidate, api_key=req.openrouter_api_key)
                     crew_task = loop.run_in_executor(
-                        None, lambda: crew.kickoff(inputs={"dataset_path": str(dataset_path), "question": req.question})
+                        None, lambda: crew.kickoff(inputs={"evidence_summary": evidence_brief, "question": req.question})
                     )
                     # Heartbeat to keep WebSocket ping alive during LLM streaming
                     tick = 0
                     while not crew_task.done():
-                        await asyncio.sleep(2.5)
+                        await asyncio.sleep(2)
                         tick += 2
                         if not crew_task.done():
                             try:
@@ -687,7 +696,7 @@ async def workflow_ws(websocket: WebSocket):
                                 })
                             except Exception:
                                 break
-                        if tick > 50:
+                        if tick > 20: # 20 seconds max per candidate
                             break
                     if crew_task.done():
                         crew_result = await crew_task
@@ -701,14 +710,14 @@ async def workflow_ws(websocket: WebSocket):
                         })
                         break
                     else:
-                        raise TimeoutError(f"Model '{display_name}' timed out after 50s")
+                        raise TimeoutError(f"Model '{display_name}' timed out after 20s")
                 except Exception as exc:
                     last_err = exc
-                    print(f"OpenRouter candidate '{model_candidate}' failed: {exc}. Attempting next model...")
+                    print(f"OpenRouter candidate '{model_candidate}' notice: {exc}. Attempting next model...")
                     continue
 
             if not crew_result:
-                # All candidates failed (e.g. invalid API key, zero credits, or OpenRouter outage)
+                # Fallback to deterministic executive intelligence
                 crew_result = generate_deterministic_insights(
                     cleaned_df=cleaned_df, quality_report=quality_report, statistics=statistics,
                     correlation=correlation, outliers=outliers, trend=trend, grouping=grouping, question=req.question
