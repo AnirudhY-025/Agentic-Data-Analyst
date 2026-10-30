@@ -3,10 +3,22 @@ import { auth } from './firebase'
 
 const api = axios.create({ baseURL: '/api' })
 
+const getActiveUserId = (): string => {
+  if (auth?.currentUser?.uid) return auth.currentUser.uid
+  try {
+    const saved = localStorage.getItem('insightflow_guest_user')
+    if (saved) {
+      const parsed = JSON.parse(saved)
+      if (parsed?.uid) return parsed.uid
+    }
+  } catch { /* ignore */ }
+  return 'default'
+}
+
 api.interceptors.request.use((config) => {
-  const user = auth?.currentUser
-  if (user) {
-    config.headers['X-User-ID'] = user.uid
+  const uid = getActiveUserId()
+  if (uid) {
+    config.headers['X-User-ID'] = uid
   }
   return config
 })
@@ -61,7 +73,7 @@ export function createWorkflowSocket(
   onEvent: (event: WorkflowEvent) => void
 ): WebSocket {
   const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
-  const userId = auth?.currentUser?.uid || 'default'
+  const userId = getActiveUserId()
 
   // Inject user's local OpenRouter API key if running an OpenRouter model
   const payload = { ...request }

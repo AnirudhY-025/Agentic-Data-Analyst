@@ -4,6 +4,7 @@ import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   signInWithPopup,
+  signInAnonymously,
   signOut,
   updateProfile,
   sendPasswordResetEmail,
@@ -17,23 +18,47 @@ interface AuthContextType {
   signInEmail: (email: string, password: string) => Promise<void>
   signUpEmail: (email: string, password: string, displayName: string) => Promise<void>
   signInGoogle: () => Promise<void>
+  signInGuest: () => Promise<void>
   logout: () => Promise<void>
   resetPassword: (email: string) => Promise<void>
 }
 
+const GUEST_STORAGE_KEY = 'insightflow_guest_user'
+
 const AuthContext = createContext<AuthContextType | null>(null)
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(null)
+  const [user, setUser] = useState<User | any>(() => {
+    try {
+      const saved = localStorage.getItem(GUEST_STORAGE_KEY)
+      return saved ? JSON.parse(saved) : null
+    } catch {
+      return null
+    }
+  })
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     if (!auth) {
+      const saved = localStorage.getItem(GUEST_STORAGE_KEY)
+      if (saved) {
+        try { setUser(JSON.parse(saved)) } catch { setUser(null) }
+      }
       setLoading(false)
       return
     }
     const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
-      setUser(firebaseUser)
+      if (firebaseUser) {
+        setUser(firebaseUser)
+        localStorage.removeItem(GUEST_STORAGE_KEY)
+      } else {
+        const saved = localStorage.getItem(GUEST_STORAGE_KEY)
+        if (saved) {
+          try { setUser(JSON.parse(saved)) } catch { setUser(null) }
+        } else {
+          setUser(null)
+        }
+      }
       setLoading(false)
     })
     return unsubscribe
@@ -52,8 +77,39 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await signInWithPopup(auth, googleProvider)
   }
 
+  const signInGuest = async () => {
+    try {
+      if (auth) {
+        const cred = await signInAnonymously(auth)
+        if (cred?.user) {
+          setUser(cred.user)
+          return
+        }
+      }
+    } catch {
+      /* Fallback to local guest session */
+    }
+
+    const guestUser: any = {
+      uid: 'guest_' + Math.random().toString(36).substring(2, 10),
+      email: 'guest@insightflow.ai',
+      displayName: 'Guest Analyst',
+      isAnonymous: true,
+    }
+    localStorage.setItem(GUEST_STORAGE_KEY, JSON.stringify(guestUser))
+    setUser(guestUser)
+  }
+
   const logout = async () => {
-    await signOut(auth)
+    localStorage.removeItem(GUEST_STORAGE_KEY)
+    if (auth) {
+      try {
+        await signOut(auth)
+      } catch {
+        /* ignore */
+      }
+    }
+    setUser(null)
   }
 
   const resetPassword = async (email: string) => {
@@ -61,7 +117,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, loading, signInEmail, signUpEmail, signInGoogle, logout, resetPassword }}>
+    <AuthContext.Provider value={{ user, loading, signInEmail, signUpEmail, signInGoogle, signInGuest, logout, resetPassword }}>
       {children}
     </AuthContext.Provider>
   )

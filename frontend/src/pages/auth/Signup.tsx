@@ -17,9 +17,10 @@ export default function Signup() {
   const [showPassword, setShowPassword] = useState(false)
   const [loading, setLoading] = useState(false)
   const [googleLoading, setGoogleLoading] = useState(false)
+  const [guestLoading, setGuestLoading] = useState(false)
   const [error, setError] = useState('')
 
-  const { signUpEmail, signInGoogle } = useAuth()
+  const { signUpEmail, signInGoogle, signInGuest } = useAuth()
   const navigate = useNavigate()
 
   const friendlyError = (code: string) => {
@@ -27,8 +28,12 @@ export default function Signup() {
       'auth/email-already-in-use': 'An account with this email already exists.',
       'auth/invalid-email': 'Please enter a valid email address.',
       'auth/weak-password': 'Password is too weak. Please choose a stronger one.',
+      'auth/unauthorized-domain': `This domain (${window.location.hostname}) is not authorized in Firebase Console. Add '${window.location.hostname}' to Firebase Console > Authentication > Settings > Authorized domains. Or click 'Instant Guest Access' below to enter immediately!`,
+      'auth/popup-blocked': "Sign-in popup was blocked by browser. Please allow popups or click 'Instant Guest Access' below.",
+      'auth/popup-closed-by-user': 'Google sign-in popup was closed before completing.',
+      'auth/operation-not-allowed': 'Google Sign-In is not enabled in Firebase Console. Please enable it under Authentication > Sign-in method.',
     }
-    return map[code] || 'Something went wrong. Please try again.'
+    return map[code] || 'Authentication error. You can click "Instant Guest Access" below to enter immediately.'
   }
 
   const handleSignup = async (e: React.FormEvent) => {
@@ -59,6 +64,19 @@ export default function Signup() {
       setError(friendlyError(err.code))
     } finally {
       setGoogleLoading(false)
+    }
+  }
+
+  const handleGuest = async () => {
+    setError('')
+    setGuestLoading(true)
+    try {
+      await signInGuest()
+      navigate('/app')
+    } catch (err: any) {
+      setError(friendlyError(err.code || ''))
+    } finally {
+      setGuestLoading(false)
     }
   }
 
@@ -126,8 +144,8 @@ export default function Signup() {
 
           {/* Google button */}
           <motion.button type="button" whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
-            onClick={handleGoogle} disabled={googleLoading || loading}
-            className="w-full flex items-center justify-center gap-3 py-3 rounded-xl font-semibold text-sm mb-5 transition-all duration-200"
+            onClick={handleGoogle} disabled={googleLoading || loading || guestLoading}
+            className="w-full flex items-center justify-center gap-3 py-3 rounded-xl font-semibold text-sm mb-2.5 transition-all duration-200"
             style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#E2E8F0' }}>
             {googleLoading ? <Loader2 size={16} className="animate-spin text-cyan-400" /> : (
               <svg width="18" height="18" viewBox="0 0 48 48">
@@ -138,6 +156,14 @@ export default function Signup() {
               </svg>
             )}
             {googleLoading ? 'Connecting…' : 'Continue with Google'}
+          </motion.button>
+
+          {/* Instant Guest Mode button */}
+          <motion.button type="button" whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
+            onClick={handleGuest} disabled={guestLoading || loading || googleLoading}
+            className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl font-semibold text-xs mb-5 transition-all duration-200"
+            style={{ background: 'rgba(99,102,241,0.12)', border: '1px solid rgba(99,102,241,0.3)', color: '#A5B4FC' }}>
+            {guestLoading ? <Loader2 size={14} className="animate-spin text-indigo-400" /> : '🚀 Instant Guest Access (No Sign-in Needed)'}
           </motion.button>
 
           {/* Divider */}
