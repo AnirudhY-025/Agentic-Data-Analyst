@@ -33,11 +33,12 @@ async def test_data_prep_and_analysis_tools(setup_test_env):
     with open(insights_path, "r") as f:
         expected = json.load(f)
         
-    from tools import detect_outliers_tool, perform_correlation_analysis_tool
+    from tools import detect_outliers, perform_correlation_analysis, load_dataset
+    
+    df = load_dataset(str(dataset_path))
     
     # 1. Deterministic Outlier Check
-    outliers_json = detect_outliers_tool(str(dataset_path))
-    outliers = json.loads(outliers_json)
+    outliers = detect_outliers(df)
     
     outlier_found = False
     for col in outliers.get("outlier_summary", []):
@@ -46,8 +47,7 @@ async def test_data_prep_and_analysis_tools(setup_test_env):
     assert outlier_found, f"Failed to detect outliers in {expected['outlier_column']}"
     
     # 2. Deterministic Correlation Check
-    corr_json = perform_correlation_analysis_tool(str(dataset_path))
-    corr = json.loads(corr_json)
+    corr = perform_correlation_analysis(df)
     
     pairs = corr.get("strongest_pairs", [])
     assert len(pairs) > 0, "No correlations found"
