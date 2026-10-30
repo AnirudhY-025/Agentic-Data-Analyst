@@ -369,19 +369,22 @@ def generate_visualizations(df: pd.DataFrame, analysis_summary: dict[str, Any]) 
     user_charts_dir = get_user_charts_dir(user_id)
     default_charts_dir = get_user_charts_dir("default")
 
-    # Downsample for visualization if dataset is very large (> 10,000 rows) for fast, smooth plotting
-    plot_df = df.sample(10000, random_state=42) if len(df) > 10000 else df
+    # Downsample for visualization to 2,500 rows for lightning-fast, smooth plotting
+    plot_df = df.sample(2500, random_state=42) if len(df) > 2500 else df
 
     numeric_columns = plot_df.select_dtypes(include=[np.number]).columns.tolist()
     categorical_columns = [column for column in plot_df.columns if column not in numeric_columns]
     datetime_columns = [column for column in plot_df.columns if pd.api.types.is_datetime64_any_dtype(plot_df[column])]
 
-    def save_chart(filename: str) -> Path:
+    metric_col = analysis_summary.get("metric_column") if isinstance(analysis_summary, dict) else None
+    date_col = analysis_summary.get("date_column") if isinstance(analysis_summary, dict) else None
+    group_col = analysis_summary.get("group_column") if isinstance(analysis_summary, dict) else None
+
+    def save_chart(filename: str, fig: plt.Figure) -> Path:
         ts = _timestamp()
         chart_name = f"{filename}_{ts}.png"
         path = user_charts_dir / chart_name
-        plt.tight_layout()
-        plt.savefig(path, dpi=160, bbox_inches="tight")
+        fig.savefig(path, dpi=100, bbox_inches="tight")
         # Dual-save to default charts dir as a safety net for browser <img> tag requests without user headers
         if user_charts_dir != default_charts_dir:
             try:
@@ -389,94 +392,100 @@ def generate_visualizations(df: pd.DataFrame, analysis_summary: dict[str, Any]) 
                 shutil.copy2(path, default_charts_dir / chart_name)
             except Exception:
                 pass
-        plt.close()
+        plt.close(fig)
+        plt.close("all")
         return path
 
+    # 1. Primary Distribution Histogram
     if numeric_columns:
-        for column in numeric_columns[:3]:
-            try:
-                plt.figure(figsize=(8, 5))
-                sns.histplot(plot_df[column].dropna(), kde=True, bins=20, color="#0F766E")
-                plt.title(f"Distribution of {column}")
-                path = save_chart(f"hist_{_slugify(column)}")
-                charts.append({"chart_type": "histogram", "title": f"Distribution of {column}", "path": path.as_posix()})
-            except Exception:
-                plt.close()
-
+        col = metric_col if metric_col in numeric_columns else numeric_columns[0]
         try:
-            plt.figure(figsize=(8, 5))
-            sns.boxplot(data=plot_df[numeric_columns[:5]], orient="h")
-            plt.title("Numeric spread and outliers")
-            path = save_chart("boxplot_numeric")
-            charts.append({"chart_type": "box_plot", "title": "Numeric spread and outliers", "path": path.as_posix()})
+            fig, ax = plt.subplots(figsize=(7.5, 4.2))
+            sns.histplot(plot_df[col].dropna(), kde=False, bins=20, color="#0F766E", ax=ax)
+            ax.set_title(f"Distribution of {col}", fontsize=12, fontweight="bold", pad=10)
+            ax.set_xlabel(col)
+            ax.set_ylabel("Count")
+            path = save_chart(f"hist_{_slugify(col)}", fig)
+            charts.append({"chart_type": "histogram", "title": f"Distribution of {col}", "path": path.as_posix()})
         except Exception:
-            plt.close()
+            plt.close("all")
 
+    # 2. Driver Correlation Heatmap (top 5 numeric features)
     if len(numeric_columns) >= 2:
         try:
-            plt.figure(figsize=(8, 6))
-            hue_col = None
-            if categorical_columns and plot_df[categorical_columns[0]].nunique() <= 8:
-                hue_col = categorical_columns[0]
-            sns.scatterplot(data=plot_df, x=numeric_columns[0], y=numeric_columns[1], hue=hue_col, legend=bool(hue_col))
-            plt.title(f"{numeric_columns[0]} vs {numeric_columns[1]}")
-            path = save_chart(f"scatter_{_slugify(numeric_columns[0])}_{_slugify(numeric_columns[1])}")
-            charts.append({"chart_type": "scatter_plot", "title": f"{numeric_columns[0]} vs {numeric_columns[1]}", "path": path.as_posix()})
-        except Exception:
-            plt.close()
-
-        try:
-            corr_mat = plot_df[numeric_columns].corr(numeric_only=True)
+            top_numeric = numeric_columns[:5]
+            corr_mat = plot_df[top_numeric].corr(numeric_only=True)
             if not corr_mat.empty and not corr_mat.isna().all().all():
-                plt.figure(figsize=(8, 6))
-                sns.heatmap(corr_mat, cmap="RdBu_r", center=0)
-                plt.title("Correlation heatmap")
-                path = save_chart("heatmap_correlation")
-                charts.append({"chart_type": "heatmap", "title": "Correlation heatmap", "path": path.as_posix()})
+                fig, ax = plt.subplots(figsize=(6.5, 4.5))
+                sns.heatmap(corr_mat, cmap="RdBu_r", center=0, annot=True, fmt=".2f", ax=ax, cbar_kws={"shrink": 0.8})
+                ax.set_title("Key Drivers Correlation Heatmap", fontsize=12, fontweight="bold", pad=10)
+                path = save_chart("heatmap_correlation", fig)
+                charts.append({"chart_type": "heatmap", "title": "Key Drivers Correlation Heatmap", "path": path.as_posix()})
         except Exception:
-            plt.close()
+            plt.close("all")
 
-    if categorical_columns and numeric_columns:
+    # 3. Categorical Segment Breakdown
+    cat_target = group_col if group_col in categorical_columns else (categorical_columns[0] if categorical_columns else None)
+    if cat_target and numeric_columns:
         try:
-            group_column = categorical_columns[0]
-            metric_column = numeric_columns[0]
-            grouped = plot_df.groupby(group_column, dropna=False)[metric_column].mean().sort_values(ascending=False).head(10)
+            num_target = metric_col if metric_col in numeric_columns else numeric_columns[0]
+            grouped = plot_df.groupby(cat_target, dropna=False)[num_target].mean().sort_values(ascending=False).head(8)
             if not grouped.empty:
-                plt.figure(figsize=(9, 6))
-                sns.barplot(x=grouped.values, y=[str(x)[:25] for x in grouped.index], color="#0284C7")
-                plt.title(f"Average {metric_column} by {group_column}")
-                path = save_chart(f"bar_{_slugify(group_column)}_{_slugify(metric_column)}")
-                charts.append({"chart_type": "bar_chart", "title": f"Average {metric_column} by {group_column}", "path": path.as_posix()})
+                fig, ax = plt.subplots(figsize=(7.5, 4.2))
+                sns.barplot(x=grouped.values, y=[str(x)[:20] for x in grouped.index], color="#0284C7", ax=ax)
+                ax.set_title(f"Average {num_target} by {cat_target}", fontsize=12, fontweight="bold", pad=10)
+                ax.set_xlabel(f"Mean {num_target}")
+                ax.set_ylabel(cat_target)
+                path = save_chart(f"bar_{_slugify(cat_target)}_{_slugify(num_target)}", fig)
+                charts.append({"chart_type": "bar_chart", "title": f"Average {num_target} by {cat_target}", "path": path.as_posix()})
         except Exception:
-            plt.close()
+            plt.close("all")
+    elif cat_target:
+        try:
+            top_counts = plot_df[cat_target].value_counts().head(8)
+            if not top_counts.empty and len(top_counts) >= 2:
+                fig, ax = plt.subplots(figsize=(7.5, 4.2))
+                sns.barplot(x=top_counts.values, y=[str(x)[:20] for x in top_counts.index], color="#4F46E5", ax=ax)
+                ax.set_title(f"Distribution of {cat_target}", fontsize=12, fontweight="bold", pad=10)
+                ax.set_xlabel("Count")
+                ax.set_ylabel(cat_target)
+                path = save_chart(f"cat_{_slugify(cat_target)}", fig)
+                charts.append({"chart_type": "bar_chart", "title": f"Distribution of {cat_target}", "path": path.as_posix()})
+        except Exception:
+            plt.close("all")
 
-    if categorical_columns:
-        for cat_col in categorical_columns[:2]:
-            try:
-                top_counts = plot_df[cat_col].value_counts().head(8)
-                if not top_counts.empty and len(top_counts) >= 2:
-                    plt.figure(figsize=(8, 4.5))
-                    sns.barplot(x=top_counts.values, y=[str(x)[:22] for x in top_counts.index], color="#4F46E5")
-                    plt.title(f"Distribution of {cat_col}")
-                    path = save_chart(f"cat_{_slugify(cat_col)}")
-                    charts.append({"chart_type": "bar_chart", "title": f"Distribution of {cat_col}", "path": path.as_posix()})
-            except Exception:
-                plt.close()
-
+    # 4. Time Series Trend or Bivariate Scatter Plot
+    rendered_trend = False
     if datetime_columns and numeric_columns:
         try:
-            date_column = datetime_columns[0]
-            metric_column = numeric_columns[0]
-            timeline = plot_df[[date_column, metric_column]].dropna().sort_values(date_column)
+            dt_col = date_col if date_col in datetime_columns else datetime_columns[0]
+            num_col = metric_col if metric_col in numeric_columns else numeric_columns[0]
+            timeline = plot_df[[dt_col, num_col]].dropna().sort_values(dt_col)
             if not timeline.empty:
-                plt.figure(figsize=(10, 5))
-                sns.lineplot(data=timeline, x=date_column, y=metric_column, marker="o")
-                plt.title(f"Trend of {metric_column} over {date_column}")
-                path = save_chart(f"line_{_slugify(date_column)}_{_slugify(metric_column)}")
-                charts.append({"chart_type": "line_chart", "title": f"Trend of {metric_column} over {date_column}", "path": path.as_posix()})
+                if len(timeline) > 100:
+                    timeline = timeline.iloc[::len(timeline) // 100]
+                fig, ax = plt.subplots(figsize=(8.0, 4.2))
+                sns.lineplot(data=timeline, x=dt_col, y=num_col, marker="o", color="#10B981", ax=ax)
+                ax.set_title(f"Trend: {num_col} over {dt_col}", fontsize=12, fontweight="bold", pad=10)
+                path = save_chart(f"trend_{_slugify(dt_col)}_{_slugify(num_col)}", fig)
+                charts.append({"chart_type": "line_chart", "title": f"Trend: {num_col} over {dt_col}", "path": path.as_posix()})
+                rendered_trend = True
         except Exception:
-            plt.close()
+            plt.close("all")
 
+    if not rendered_trend and len(numeric_columns) >= 2:
+        try:
+            col_x = numeric_columns[0]
+            col_y = numeric_columns[1]
+            fig, ax = plt.subplots(figsize=(7.5, 4.2))
+            sns.scatterplot(data=plot_df.head(400), x=col_x, y=col_y, color="#6366F1", alpha=0.7, ax=ax)
+            ax.set_title(f"{col_x} vs {col_y}", fontsize=12, fontweight="bold", pad=10)
+            path = save_chart(f"scatter_{_slugify(col_x)}_{_slugify(col_y)}", fig)
+            charts.append({"chart_type": "scatter_plot", "title": f"{col_x} vs {col_y}", "path": path.as_posix()})
+        except Exception:
+            plt.close("all")
+
+    plt.close("all")
     return {"chart_paths": [chart["path"] for chart in charts], "charts": charts, "summary": analysis_summary}
 
 

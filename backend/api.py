@@ -521,21 +521,23 @@ async def workflow_ws(websocket: WebSocket):
 
         # Step 1 — Clean
         await send({"type": "step", "step": 1, "label": "Planner & Data Prep Agent: Cleaning dataset", "status": "running"})
-        await asyncio.sleep(0)
+        await asyncio.sleep(0.01)
         df = load_dataset(dataset_path)
         cleaned_df, clean_summary = clean_dataset(df)
         await send({"type": "step", "step": 1, "label": "Planner & Data Prep Agent: Cleaning dataset", "status": "done",
                     "detail": f"{cleaned_df.shape[0]:,} rows × {cleaned_df.shape[1]} columns"})
+        await asyncio.sleep(0.01)
 
         # Step 2 — Quality report
         await send({"type": "step", "step": 2, "label": "Data Prep Agent: Quality & integrity audit", "status": "running"})
-        await asyncio.sleep(0)
+        await asyncio.sleep(0.01)
         quality_report = generate_data_quality_report(cleaned_df, dataset_path)
         await send({"type": "step", "step": 2, "label": "Data Prep Agent: Quality & integrity audit", "status": "done"})
+        await asyncio.sleep(0.01)
 
         # Step 3 — Statistics
         await send({"type": "step", "step": 3, "label": "Analysis Agent: Correlations & outlier detection", "status": "running"})
-        await asyncio.sleep(0)
+        await asyncio.sleep(0.01)
         statistics = calculate_statistics(cleaned_df)
         correlation = perform_correlation_analysis(cleaned_df)
         trend = perform_trend_analysis(cleaned_df)
@@ -543,23 +545,32 @@ async def workflow_ws(websocket: WebSocket):
         grouping = perform_group_analysis(cleaned_df)
         outliers = detect_outliers(cleaned_df)
         await send({"type": "step", "step": 3, "label": "Analysis Agent: Correlations & outlier detection", "status": "done"})
+        await asyncio.sleep(0.01)
 
         # Step 4 — Visualizations
         await send({"type": "step", "step": 4, "label": "Visualization Agent: Generating analytical charts", "status": "running"})
-        await asyncio.sleep(0)
-        visualizations = generate_visualizations(cleaned_df, {
-            "statistics": statistics, "correlation": correlation,
-            "trend": trend, "distribution": distribution,
-            "grouping": grouping, "outliers": outliers, "question": req.question,
-            "user_id": user_id
-        })
+        await asyncio.sleep(0.02)
+        loop = asyncio.get_running_loop()
+        visualizations = await loop.run_in_executor(
+            None,
+            lambda: generate_visualizations(cleaned_df, {
+                "statistics": statistics, "correlation": correlation,
+                "trend": trend, "distribution": distribution,
+                "grouping": grouping, "outliers": outliers, "question": req.question,
+                "user_id": user_id,
+                "metric_column": req.metric_column,
+                "date_column": req.date_column,
+                "group_column": req.group_column,
+            })
+        )
         chart_count = len(visualizations.get("charts", []))
         await send({"type": "step", "step": 4, "label": "Visualization Agent: Generating analytical charts", "status": "done",
                     "detail": f"{chart_count} chart(s) generated"})
+        await asyncio.sleep(0.02)
 
         # Step 5 — Reports
         await send({"type": "step", "step": 5, "label": "Report Agent: Compiling Markdown & PDF deliverables", "status": "running"})
-        await asyncio.sleep(0)
+        await asyncio.sleep(0.02)
         evidence = summarize_analysis_for_insights(quality_report, statistics, correlation, outliers, grouping)
         report_payload = {
             "report_title": DEFAULT_OUTPUT_FILENAME.replace("_", " ").title(),
@@ -579,10 +590,15 @@ async def workflow_ws(websocket: WebSocket):
             "recommendations": [],
         }
         reports_dir = get_user_reports_dir(user_id)
-        markdown_path = generate_markdown_report(report_payload, reports_dir / f"{DEFAULT_OUTPUT_FILENAME}.md")
-        pdf_path = generate_pdf_report(markdown_path, reports_dir / f"{DEFAULT_OUTPUT_FILENAME}.pdf")
+        markdown_path = await loop.run_in_executor(
+            None, lambda: generate_markdown_report(report_payload, reports_dir / f"{DEFAULT_OUTPUT_FILENAME}.md")
+        )
+        pdf_path = await loop.run_in_executor(
+            None, lambda: generate_pdf_report(markdown_path, reports_dir / f"{DEFAULT_OUTPUT_FILENAME}.pdf")
+        )
         await send({"type": "step", "step": 5, "label": "Report Agent: Compiling Markdown & PDF deliverables", "status": "done",
                     "detail": f"MD + PDF saved"})
+        await asyncio.sleep(0.02)
 
         # Step 6 — CrewAI Agents
         await send({"type": "step", "step": 6, "label": "Insight & Strategy Agents: Synthesizing intelligence", "status": "running"})
@@ -593,10 +609,32 @@ async def workflow_ws(websocket: WebSocket):
         if is_ollama:
             try:
                 crew = build_crew(model_name=req.model, api_key=None, ollama_base_url=req.ollama_base_url)
-                loop = asyncio.get_event_loop()
-                crew_result = await loop.run_in_executor(
+                crew_task = loop.run_in_executor(
                     None, lambda: crew.kickoff(inputs={"dataset_path": str(dataset_path), "question": req.question})
                 )
+                tick = 0
+                while not crew_task.done():
+                    await asyncio.sleep(2)
+                    tick += 2
+                    if not crew_task.done():
+                        try:
+                            await send({
+                                "type": "step", "step": 6,
+                                "label": "Insight & Strategy Agents: Synthesizing intelligence",
+                                "status": "running",
+                                "detail": f"Local Ollama agents synthesizing ({tick}s)..."
+                            })
+                        except Exception:
+                            break
+                    if tick > 45:
+                        break
+                if crew_task.done():
+                    crew_result = await crew_task
+                else:
+                    crew_result = generate_deterministic_insights(
+                        cleaned_df=cleaned_df, quality_report=quality_report, statistics=statistics,
+                        correlation=correlation, outliers=outliers, trend=trend, grouping=grouping, question=req.question
+                    )
                 await send({"type": "step", "step": 6, "label": "Insight & Strategy Agents: Synthesizing intelligence", "status": "done",
                             "detail": "CrewAI Ollama agents complete"})
             except Exception as exc:
@@ -630,11 +668,29 @@ async def workflow_ws(websocket: WebSocket):
                         "status": "running",
                     })
                     crew = build_crew(model_name=model_candidate, api_key=req.openrouter_api_key)
-                    loop = asyncio.get_event_loop()
-                    crew_result = await loop.run_in_executor(
+                    crew_task = loop.run_in_executor(
                         None, lambda: crew.kickoff(inputs={"dataset_path": str(dataset_path), "question": req.question})
                     )
-                    if crew_result:
+                    # Heartbeat to keep WebSocket ping alive during LLM streaming
+                    tick = 0
+                    while not crew_task.done():
+                        await asyncio.sleep(2.5)
+                        tick += 2
+                        if not crew_task.done():
+                            try:
+                                await send({
+                                    "type": "step",
+                                    "step": 6,
+                                    "label": f"Insight & Strategy Agents: Running CrewAI ({display_name})",
+                                    "status": "running",
+                                    "detail": f"Synthesizing strategic intelligence ({tick}s)..."
+                                })
+                            except Exception:
+                                break
+                        if tick > 50:
+                            break
+                    if crew_task.done():
+                        crew_result = await crew_task
                         last_err = None
                         await send({
                             "type": "step",
@@ -644,6 +700,8 @@ async def workflow_ws(websocket: WebSocket):
                             "detail": f"CrewAI completed ({display_name})",
                         })
                         break
+                    else:
+                        raise TimeoutError(f"Model '{display_name}' timed out after 50s")
                 except Exception as exc:
                     last_err = exc
                     print(f"OpenRouter candidate '{model_candidate}' failed: {exc}. Attempting next model...")

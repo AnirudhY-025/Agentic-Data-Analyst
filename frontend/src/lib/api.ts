@@ -131,10 +131,48 @@ export function createWorkflowSocket(
   }
 
   const ws = new WebSocket(`${proto}://${window.location.host}/ws/workflow?user_id=${userId}`)
+  let completed = false
+
   ws.onopen = () => ws.send(JSON.stringify(payload))
+  
   ws.onmessage = (e) => {
-    try { onEvent(JSON.parse(e.data)) } catch { /* ignore */ }
+    try {
+      const data = JSON.parse(e.data)
+      if (data.type === 'complete') completed = true
+      onEvent(data)
+    } catch { /* ignore */ }
   }
+
+  ws.onerror = (e) => {
+    console.error('Workflow WebSocket error:', e)
+  }
+
+  ws.onclose = () => {
+    if (!completed) {
+      // Check if analysis finished on the backend
+      setTimeout(() => {
+        fetch(`/api/analysis?user_id=${userId}`)
+          .then(r => r.ok ? r.json() : null)
+          .then(data => {
+            if (data && data.quality) {
+              onEvent({ type: 'complete', results: data })
+            } else {
+              onEvent({
+                type: 'error',
+                message: 'Analysis connection interrupted. Please try running analysis again.'
+              })
+            }
+          })
+          .catch(() => {
+            onEvent({
+              type: 'error',
+              message: 'Analysis connection interrupted. Please check network and retry.'
+            })
+          })
+      }, 500)
+    }
+  }
+
   return ws
 }
 
