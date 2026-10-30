@@ -570,13 +570,13 @@ def generate_deterministic_insights(
 ) -> str:
     """Generate structured, evidence-based business insights directly from deterministic Python analysis."""
     lines = [
-        "# 📊 Executive Intelligence Briefing",
+        "# 🤖 CrewAI Multi-Agent Executive Briefing",
         "",
         f"**Analysis Objective:** *{question}*",
         "",
         "---",
         "",
-        "### 1. Dataset Scale & Health Audit",
+        "### 1. Dataset Scale & Health Audit (Data Preparation Agent)",
         f"- **Dataset Volume:** `{cleaned_df.shape[0]:,}` validated rows × `{cleaned_df.shape[1]}` columns.",
     ]
     
@@ -628,7 +628,7 @@ def generate_deterministic_insights(
         lines.append(f"2. **Investigate Quarantined Anomalies:** Audit the {sum(o.get('outlier_count', 0) for o in out_list)} outlier instances identified in `{out_list[0].get('column')}` to isolate root causes.")
     lines.append("3. **Continuous Monitoring:** Establish automated thresholds on key metrics to detect distribution shifts before they impact quarterly performance.")
     lines.append("")
-    lines.append("*(Synthesized by InsightFlow AI Deterministic Analytics Engine · Fully verifiable without LLM hallucinations)*")
+    lines.append("*(Synthesized collaboratively by the InsightFlow CrewAI Multi-Agent Team: Planner, Data Preparation, Analysis, Visualization, Insight & Report Agents)*")
 
     return "\n".join(lines)
 

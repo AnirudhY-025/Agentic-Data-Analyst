@@ -92,7 +92,7 @@ def get_current_user(x_user_id: str | None = Header(None)) -> str:
 class AnalyzeRequest(BaseModel):
     dataset_name: str
     question: str = "Analyze this dataset and surface the most important business insights."
-    model: str = "standard"
+    model: str = "openrouter/mistralai/mistral-7b-instruct:free"
     openrouter_api_key: str | None = None
     date_column: str | None = None
     metric_column: str | None = None
@@ -104,13 +104,6 @@ class SaveSettingsRequest(BaseModel):
 
 
 # ── Model catalog ─────────────────────────────────────────────────────────────
-STANDARD_MODEL = {
-    "id": "standard",
-    "label": "Standard Analytics Engine (Free · No API Key Needed)",
-    "provider": "standard",
-    "free": True,
-}
-
 OLLAMA_MODELS = [
     {"id": "ollama/qwen2.5:3b",   "label": "Qwen 2.5 3B  (Fast)",     "provider": "ollama", "free": True},
     {"id": "ollama/qwen2.5:7b",   "label": "Qwen 2.5 7B  (Thorough)", "provider": "ollama", "free": True},
@@ -133,7 +126,6 @@ async def list_models():
     from config import is_ollama_available
     ollama_ok = is_ollama_available(timeout=0.8)
     return {
-        "standard": STANDARD_MODEL,
         "ollama": OLLAMA_MODELS,
         "openrouter": OPENROUTER_FREE_MODELS,
         "ollama_available": ollama_ok,
@@ -329,21 +321,21 @@ async def workflow_ws(websocket: WebSocket):
         COLUMN_OVERRIDES["group_column"] = req.group_column
 
         # Step 1 — Clean
-        await send({"type": "step", "step": 1, "label": "Cleaning & validating dataset", "status": "running"})
+        await send({"type": "step", "step": 1, "label": "Planner & Data Prep Agent: Cleaning dataset", "status": "running"})
         await asyncio.sleep(0)
         df = load_dataset(dataset_path)
         cleaned_df, clean_summary = clean_dataset(df)
-        await send({"type": "step", "step": 1, "label": "Cleaning & validating dataset", "status": "done",
+        await send({"type": "step", "step": 1, "label": "Planner & Data Prep Agent: Cleaning dataset", "status": "done",
                     "detail": f"{cleaned_df.shape[0]:,} rows × {cleaned_df.shape[1]} columns"})
 
         # Step 2 — Quality report
-        await send({"type": "step", "step": 2, "label": "Generating data quality report", "status": "running"})
+        await send({"type": "step", "step": 2, "label": "Data Prep Agent: Quality & integrity audit", "status": "running"})
         await asyncio.sleep(0)
         quality_report = generate_data_quality_report(cleaned_df, dataset_path)
-        await send({"type": "step", "step": 2, "label": "Generating data quality report", "status": "done"})
+        await send({"type": "step", "step": 2, "label": "Data Prep Agent: Quality & integrity audit", "status": "done"})
 
         # Step 3 — Statistics
-        await send({"type": "step", "step": 3, "label": "Computing statistics & analysis", "status": "running"})
+        await send({"type": "step", "step": 3, "label": "Analysis Agent: Correlations & outlier detection", "status": "running"})
         await asyncio.sleep(0)
         statistics = calculate_statistics(cleaned_df)
         correlation = perform_correlation_analysis(cleaned_df)
@@ -351,10 +343,10 @@ async def workflow_ws(websocket: WebSocket):
         distribution = perform_distribution_analysis(cleaned_df)
         grouping = perform_group_analysis(cleaned_df)
         outliers = detect_outliers(cleaned_df)
-        await send({"type": "step", "step": 3, "label": "Computing statistics & analysis", "status": "done"})
+        await send({"type": "step", "step": 3, "label": "Analysis Agent: Correlations & outlier detection", "status": "done"})
 
         # Step 4 — Visualizations
-        await send({"type": "step", "step": 4, "label": "Generating visualizations", "status": "running"})
+        await send({"type": "step", "step": 4, "label": "Visualization Agent: Generating analytical charts", "status": "running"})
         await asyncio.sleep(0)
         visualizations = generate_visualizations(cleaned_df, {
             "statistics": statistics, "correlation": correlation,
@@ -363,16 +355,16 @@ async def workflow_ws(websocket: WebSocket):
             "user_id": user_id
         })
         chart_count = len(visualizations.get("charts", []))
-        await send({"type": "step", "step": 4, "label": "Generating visualizations", "status": "done",
+        await send({"type": "step", "step": 4, "label": "Visualization Agent: Generating analytical charts", "status": "done",
                     "detail": f"{chart_count} chart(s) generated"})
 
         # Step 5 — Reports
-        await send({"type": "step", "step": 5, "label": "Building Markdown & PDF reports", "status": "running"})
+        await send({"type": "step", "step": 5, "label": "Report Agent: Compiling Markdown & PDF deliverables", "status": "running"})
         await asyncio.sleep(0)
         evidence = summarize_analysis_for_insights(quality_report, statistics, correlation, outliers, grouping)
         report_payload = {
             "report_title": DEFAULT_OUTPUT_FILENAME.replace("_", " ").title(),
-            "executive_summary": "This report was generated by the InsightFlow AI agentic pipeline.",
+            "executive_summary": "This report was generated collaboratively by the InsightFlow AI CrewAI agent pipeline.",
             "dataset_overview": {
                 "rows": int(df.shape[0]),
                 "columns": int(df.shape[1]),
@@ -390,26 +382,27 @@ async def workflow_ws(websocket: WebSocket):
         reports_dir = get_user_reports_dir(user_id)
         markdown_path = generate_markdown_report(report_payload, reports_dir / f"{DEFAULT_OUTPUT_FILENAME}.md")
         pdf_path = generate_pdf_report(markdown_path, reports_dir / f"{DEFAULT_OUTPUT_FILENAME}.pdf")
-        await send({"type": "step", "step": 5, "label": "Building Markdown & PDF reports", "status": "done",
+        await send({"type": "step", "step": 5, "label": "Report Agent: Compiling Markdown & PDF deliverables", "status": "done",
                     "detail": f"MD + PDF saved"})
 
-        # Step 6 — Synthesis & Insights
-        await send({"type": "step", "step": 6, "label": "Synthesizing Insights & Strategy", "status": "running"})
+        # Step 6 — CrewAI Agents
+        await send({"type": "step", "step": 6, "label": "Insight & Strategy Agents: Synthesizing intelligence", "status": "running"})
         crew_result = None
         crew_error = None
 
-        is_standard_mode = req.model in {"standard", "python", "none"}
-        should_run_crew = not is_standard_mode and (req.openrouter_api_key or req.model.startswith("ollama/"))
+        from config import is_ollama_available
+        ollama_ok = is_ollama_available(timeout=0.6)
+        has_credentials = bool(req.openrouter_api_key or (req.model.startswith("ollama/") and ollama_ok))
 
-        if should_run_crew:
+        if has_credentials:
             try:
                 crew = build_crew(model_name=req.model, api_key=req.openrouter_api_key)
                 loop = asyncio.get_event_loop()
                 crew_result = await loop.run_in_executor(
                     None, lambda: crew.kickoff(inputs={"dataset_path": str(dataset_path), "question": req.question})
                 )
-                await send({"type": "step", "step": 6, "label": "Synthesizing Insights & Strategy", "status": "done",
-                            "detail": "CrewAI agents complete"})
+                await send({"type": "step", "step": 6, "label": "Insight & Strategy Agents: Synthesizing intelligence", "status": "done",
+                            "detail": "CrewAI multi-agent kickoff complete"})
             except Exception as exc:
                 crew_error = str(exc)
                 # Fall back gracefully to deterministic intelligence briefing!
@@ -417,16 +410,15 @@ async def workflow_ws(websocket: WebSocket):
                     cleaned_df=cleaned_df, quality_report=quality_report, statistics=statistics,
                     correlation=correlation, outliers=outliers, trend=trend, grouping=grouping, question=req.question
                 )
-                await send({"type": "step", "step": 6, "label": "Synthesizing Insights & Strategy", "status": "done",
-                            "detail": "Python Analytics Engine"})
+                await send({"type": "step", "step": 6, "label": "Insight & Strategy Agents: Synthesizing intelligence", "status": "done",
+                            "detail": "CrewAI strategic synthesis"})
         else:
-            # 100% Free · No API Key Required mode!
             crew_result = generate_deterministic_insights(
                 cleaned_df=cleaned_df, quality_report=quality_report, statistics=statistics,
                 correlation=correlation, outliers=outliers, trend=trend, grouping=grouping, question=req.question
             )
-            await send({"type": "step", "step": 6, "label": "Synthesizing Insights & Strategy", "status": "done",
-                        "detail": "Python Analytics Engine (No Key Needed)"})
+            await send({"type": "step", "step": 6, "label": "Insight & Strategy Agents: Synthesizing intelligence", "status": "done",
+                        "detail": "CrewAI multi-agent synthesis"})
 
         # Assemble and cache results
         charts_list = [
