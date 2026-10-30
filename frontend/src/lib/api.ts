@@ -29,12 +29,14 @@ export interface AnalyzeRequest {
   question: string
   model: string
   openrouter_api_key?: string | null
+  ollama_base_url?: string | null
   date_column?: string | null
   metric_column?: string | null
   group_column?: string | null
 }
 
 export const USER_OPENROUTER_KEY_STORAGE = 'insightflow_openrouter_api_key'
+export const USER_OLLAMA_URL_STORAGE = 'insightflow_ollama_base_url'
 
 export const getUserOpenRouterKey = (): string => {
   try {
@@ -50,6 +52,26 @@ export const setUserOpenRouterKey = (key: string): void => {
       localStorage.setItem(USER_OPENROUTER_KEY_STORAGE, key.trim())
     } else {
       localStorage.removeItem(USER_OPENROUTER_KEY_STORAGE)
+    }
+  } catch {
+    /* ignore storage errors */
+  }
+}
+
+export const getUserOllamaUrl = (): string => {
+  try {
+    return localStorage.getItem(USER_OLLAMA_URL_STORAGE)?.trim() || 'http://localhost:11434'
+  } catch {
+    return 'http://localhost:11434'
+  }
+}
+
+export const setUserOllamaUrl = (url: string): void => {
+  try {
+    if (url.trim()) {
+      localStorage.setItem(USER_OLLAMA_URL_STORAGE, url.trim())
+    } else {
+      localStorage.removeItem(USER_OLLAMA_URL_STORAGE)
     }
   } catch {
     /* ignore storage errors */
@@ -127,5 +149,7 @@ export interface ModelsResponse {
 export const getModels = () => api.get<ModelsResponse>('/models').then(r => r.data)
 export const getSettings = () =>
   api.get<{ ollama_available: boolean; ollama_base_url: string }>('/settings').then(r => r.data)
+export const checkOllama = (url: string) =>
+  api.get<{ url: string; available: boolean }>(`/check-ollama?url=${encodeURIComponent(url)}`).then(r => r.data)
 export const saveSettings = (body: { openrouter_api_key: string }) =>
   api.post<{ success: boolean; valid: boolean }>('/settings', body).then(r => r.data)

@@ -20,10 +20,10 @@ from tools import (
 )
 
 
-def build_llm(model_name: str | None = None, api_key: str | None = None) -> LLM:
+def build_llm(model_name: str | None = None, api_key: str | None = None, ollama_base_url: str | None = None) -> LLM:
     """Build an LLM instance for the given model.
 
-    - Ollama models (prefix 'ollama/'): connect to local Ollama server if running.
+    - Ollama models (prefix 'ollama/'): connect to Ollama server at ollama_base_url or default.
     - OpenRouter models (prefix 'openrouter/'): connect via OpenRouter API
       using the per-request user api_key or fallback OPENROUTER_API_KEY env var.
     """
@@ -43,20 +43,21 @@ def build_llm(model_name: str | None = None, api_key: str | None = None) -> LLM:
             temperature=DEFAULT_LLM_TEMPERATURE,
         )
     else:
-        # Ollama or local provider
-        if not is_ollama_available(DEFAULT_OLLAMA_BASE_URL, timeout=1.0):
+        # Ollama or local/remote provider
+        base = (ollama_base_url or "").strip() or DEFAULT_OLLAMA_BASE_URL
+        if not is_ollama_available(base, timeout=1.0):
             raise ConnectionError(
-                f"Ollama is not running at {DEFAULT_OLLAMA_BASE_URL}. In cloud-hosted mode (e.g. Render), local Ollama is not accessible. Please switch to an OpenRouter model with your free API key, or install and run Ollama locally on your desktop."
+                f"Ollama is not responding at {base}. Please ensure Ollama is running (`ollama serve` or desktop app) or verify your host URL in Settings."
             )
         return LLM(
             model=name,
-            base_url=DEFAULT_OLLAMA_BASE_URL,
+            base_url=base,
             temperature=DEFAULT_LLM_TEMPERATURE,
         )
 
 
-def build_agents(model_name: str | None = None, api_key: str | None = None) -> dict[str, Agent]:
-    llm = build_llm(model_name, api_key=api_key)
+def build_agents(model_name: str | None = None, api_key: str | None = None, ollama_base_url: str | None = None) -> dict[str, Agent]:
+    llm = build_llm(model_name, api_key=api_key, ollama_base_url=ollama_base_url)
     return {
         "planner": Agent(
             role="Planner Agent",

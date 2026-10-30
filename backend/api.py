@@ -94,6 +94,7 @@ class AnalyzeRequest(BaseModel):
     question: str = "Analyze this dataset and surface the most important business insights."
     model: str = "openrouter/mistralai/mistral-7b-instruct:free"
     openrouter_api_key: str | None = None
+    ollama_base_url: str | None = None
     date_column: str | None = None
     metric_column: str | None = None
     group_column: str | None = None
@@ -130,6 +131,14 @@ async def list_models():
         "openrouter": OPENROUTER_FREE_MODELS,
         "ollama_available": ollama_ok,
     }
+
+
+@app.get("/api/check-ollama")
+async def check_ollama(url: str = "http://localhost:11434"):
+    """Check reachability of a given Ollama endpoint."""
+    from config import is_ollama_available
+    available = is_ollama_available(base_url=url, timeout=1.2)
+    return {"url": url, "available": available}
 
 
 @app.get("/api/settings")
@@ -390,11 +399,25 @@ async def workflow_ws(websocket: WebSocket):
         crew_result = None
         crew_error = None
 
-        from config import is_ollama_available
-        ollama_ok = is_ollama_available(timeout=0.6)
-        has_credentials = bool(req.openrouter_api_key or (req.model.startswith("ollama/") and ollama_ok))
-
-        if has_credentials:
+        is_ollama = req.model.startswith("ollama/")
+        if is_ollama:
+            try:
+                crew = build_crew(model_name=req.model, api_key=None, ollama_base_url=req.ollama_base_url)
+                loop = asyncio.get_event_loop()
+                crew_result = await loop.run_in_executor(
+                    None, lambda: crew.kickoff(inputs={"dataset_path": str(dataset_path), "question": req.question})
+                )
+                await send({"type": "step", "step": 6, "label": "Insight & Strategy Agents: Synthesizing intelligence", "status": "done",
+                            "detail": "CrewAI Ollama agents complete"})
+            except Exception as exc:
+                crew_error = str(exc)
+                crew_result = generate_deterministic_insights(
+                    cleaned_df=cleaned_df, quality_report=quality_report, statistics=statistics,
+                    correlation=correlation, outliers=outliers, trend=trend, grouping=grouping, question=req.question
+                )
+                await send({"type": "step", "step": 6, "label": "Insight & Strategy Agents: Synthesizing intelligence", "status": "done",
+                            "detail": "CrewAI strategic synthesis"})
+        elif req.openrouter_api_key:
             try:
                 crew = build_crew(model_name=req.model, api_key=req.openrouter_api_key)
                 loop = asyncio.get_event_loop()
@@ -402,10 +425,9 @@ async def workflow_ws(websocket: WebSocket):
                     None, lambda: crew.kickoff(inputs={"dataset_path": str(dataset_path), "question": req.question})
                 )
                 await send({"type": "step", "step": 6, "label": "Insight & Strategy Agents: Synthesizing intelligence", "status": "done",
-                            "detail": "CrewAI multi-agent kickoff complete"})
+                            "detail": "CrewAI OpenRouter agents complete"})
             except Exception as exc:
                 crew_error = str(exc)
-                # Fall back gracefully to deterministic intelligence briefing!
                 crew_result = generate_deterministic_insights(
                     cleaned_df=cleaned_df, quality_report=quality_report, statistics=statistics,
                     correlation=correlation, outliers=outliers, trend=trend, grouping=grouping, question=req.question

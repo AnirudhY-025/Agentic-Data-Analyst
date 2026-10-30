@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Upload, CheckCircle2, AlertCircle, Loader2, ChevronDown, ChevronUp, Play, Cpu, Globe, Lock, ExternalLink, Bot, Users } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
-import { getDatasets, getColumns, uploadDataset, createWorkflowSocket, getModels, getUserOpenRouterKey, setUserOpenRouterKey, saveSettings, type WorkflowEvent, type ModelEntry } from '../../lib/api'
+import { getDatasets, getColumns, uploadDataset, createWorkflowSocket, getModels, getUserOpenRouterKey, setUserOpenRouterKey, saveSettings, getUserOllamaUrl, type WorkflowEvent, type ModelEntry } from '../../lib/api'
 import { useStore } from '../../store/useStore'
 import { cn } from '../../lib/utils'
 
@@ -22,6 +22,7 @@ export default function Analyze() {
   const [ollamaAvailable, setOllamaAvailable] = useState(true)
   const [modelsLoaded, setModelsLoaded] = useState(false)
   const [userApiKey, setUserApiKey] = useState(getUserOpenRouterKey())
+  const [userOllamaUrl, setUserOllamaUrlState] = useState(getUserOllamaUrl())
   const [inlineKeyInput, setInlineKeyInput] = useState('')
   const [inlineKeySaving, setInlineKeySaving] = useState(false)
   const [inlineKeyError, setInlineKeyError] = useState('')
@@ -42,10 +43,6 @@ export default function Analyze() {
       setOpenrouterModels(d.openrouter || [])
       setOllamaAvailable(d.ollama_available)
       setModelsLoaded(true)
-      // On cloud deployments (e.g. Render) where Ollama is not running, default to OpenRouter free cloud model
-      if (!d.ollama_available && model.startsWith('ollama/')) {
-        setModel(d.openrouter?.[0]?.id || 'openrouter/mistralai/mistral-7b-instruct:free')
-      }
     }).catch(() => setModelsLoaded(true))
   }, [])
 
@@ -93,18 +90,15 @@ export default function Analyze() {
     if (!selectedDataset) return
     setValidationError('')
 
-    if (model.startsWith('ollama/') && !ollamaAvailable) {
-      setValidationError('Ollama is not running on this cloud server. Please switch to OpenRouter Cloud AI.')
-      return
-    }
-
     const activeKey = getUserOpenRouterKey()
+    const activeOllamaUrl = getUserOllamaUrl()
     startWorkflow()
     createWorkflowSocket({
       dataset_name: selectedDataset,
       question,
       model,
       openrouter_api_key: activeKey || null,
+      ollama_base_url: activeOllamaUrl || null,
       date_column: dateColumn || null,
       metric_column: metricColumn || null,
       group_column: groupColumn || null,
@@ -198,7 +192,7 @@ export default function Analyze() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-4">
               {[
                 { key: 'openrouter', label: 'OpenRouter (Cloud CrewAI)', icon: Globe, color: '#8B5CF6', badge: userApiKey ? 'Key Active' : 'Free Cloud Tier' },
-                { key: 'ollama', label: 'Ollama (Desktop CrewAI)', icon: Cpu, color: '#06B6D4', badge: ollamaAvailable ? 'Local Active' : 'Desktop Only' },
+                { key: 'ollama', label: 'Ollama (Local / Desktop)', icon: Cpu, color: '#06B6D4', badge: 'Local Active' },
               ].map(p => {
                 const isActive = selectedProvider === p.key
                 return (
@@ -227,8 +221,8 @@ export default function Analyze() {
                     </div>
                     <span className="text-[10px] px-2 py-0.5 rounded font-mono font-bold"
                       style={{
-                        background: p.key === 'ollama' && !ollamaAvailable ? 'rgba(245,158,11,0.15)' : 'rgba(255,255,255,0.08)',
-                        color: p.key === 'ollama' && !ollamaAvailable ? '#F59E0B' : isActive ? p.color : '#64748B'
+                        background: 'rgba(255,255,255,0.08)',
+                        color: isActive ? p.color : '#64748B'
                       }}>
                       {p.badge}
                     </span>
@@ -295,31 +289,27 @@ export default function Analyze() {
               </div>
             )}
 
-            {/* Ollama models (Desktop CrewAI) */}
+            {/* Ollama models (Local / Desktop CrewAI) */}
             {selectedProvider === 'ollama' && (
-              <div className="flex flex-col gap-2">
-                {!ollamaAvailable && (
-                  <div className="p-4 rounded-xl border text-sm mb-2" style={{ background: 'rgba(245,158,11,0.06)', borderColor: 'rgba(245,158,11,0.25)', color: '#FCD34D' }}>
-                    <div className="flex items-center gap-2 font-semibold mb-1">
-                      <AlertCircle size={14} className="text-amber-400" /> Local Desktop Ollama Not Connected
-                    </div>
-                    <div className="text-xs text-amber-200/70 leading-relaxed mb-3">
-                      Ollama runs locally on your desktop machine (<code>localhost:11434</code>) and is not available on this cloud server.
-                      To run the CrewAI agents on this cloud deployment, please switch to <strong>OpenRouter (Cloud CrewAI)</strong>.
-                    </div>
-                    <button type="button" onClick={() => setModel(openrouterModels[0]?.id || 'openrouter/mistralai/mistral-7b-instruct:free')}
-                      className="text-xs px-3.5 py-1.5 rounded-lg font-semibold text-white transition-all shadow-md"
-                      style={{ background: 'linear-gradient(135deg,#7C3AED,#8B5CF6)' }}>
-                      Switch to OpenRouter Cloud AI →
-                    </button>
+              <div className="flex flex-col gap-3">
+                <div className="flex items-center justify-between px-3.5 py-2 rounded-lg" style={{ background: 'rgba(6,182,212,0.08)', border: '1px solid rgba(6,182,212,0.2)' }}>
+                  <div className="flex items-center gap-2">
+                    <Cpu size={14} className="text-cyan-400" />
+                    <span className="text-xs text-cyan-300 font-medium">Ollama Endpoint: <code>{userOllamaUrl}</code></span>
                   </div>
-                )}
-                {ollamaModels.map(m => (
-                  <ModelOption key={m.id} m={m} selected={model === m.id} onSelect={() => setModel(m.id)} color="#06B6D4" disabled={!ollamaAvailable} />
-                ))}
-                <p className="text-xs text-slate-500 mt-1">
-                  {ollamaAvailable ? 'Connected to local Ollama at localhost:11434' : 'Ollama requires a desktop installation to run locally on your machine'}
-                </p>
+                  <button type="button" onClick={() => navigate('/app/settings')} className="text-[11px] text-slate-400 hover:text-cyan-400 underline">
+                    Configure Endpoint
+                  </button>
+                </div>
+
+                <div className="flex flex-col gap-2">
+                  {ollamaModels.map(m => (
+                    <ModelOption key={m.id} m={m} selected={model === m.id} onSelect={() => setModel(m.id)} color="#06B6D4" disabled={false} />
+                  ))}
+                  <p className="text-xs text-slate-400 mt-1">
+                    Runs CrewAI multi-agent analytics with models hosted on your Ollama server.
+                  </p>
+                </div>
               </div>
             )}
           </>
