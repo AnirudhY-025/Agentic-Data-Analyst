@@ -39,10 +39,20 @@ export default function Analyze() {
   useEffect(() => {
     getDatasets().then(d => setDatasets(d.datasets)).catch(() => { })
     getModels().then(d => {
-      setOllamaModels(d.ollama || [])
-      setOpenrouterModels(d.openrouter || [])
+      const oModels = d.ollama || []
+      const orModels = d.openrouter || []
+      setOllamaModels(oModels)
+      setOpenrouterModels(orModels)
       setOllamaAvailable(d.ollama_available)
       setModelsLoaded(true)
+
+      // Ensure model in store is valid against active catalog
+      const allKnown = new Set([...oModels.map(m => m.id), ...orModels.map(m => m.id)])
+      if (!allKnown.has(model) && !model.startsWith('ollama/')) {
+        if (orModels.length > 0) {
+          setModel(orModels[0].id)
+        }
+      }
     }).catch(() => setModelsLoaded(true))
   }, [])
 
@@ -202,7 +212,7 @@ export default function Analyze() {
                       setValidationError('')
                       if (p.key === 'openrouter') {
                         if (!model.startsWith('openrouter/')) {
-                          setModel(openrouterModels[0]?.id || 'openrouter/mistralai/mistral-7b-instruct:free')
+                          setModel(openrouterModels[0]?.id || 'openrouter/openrouter/free')
                         }
                       } else if (p.key === 'ollama') {
                         if (!model.startsWith('ollama/')) {

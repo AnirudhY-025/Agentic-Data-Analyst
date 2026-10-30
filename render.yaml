@@ -8,7 +8,7 @@ services:
     healthCheckPath: /api/health
     envVars:
       - key: LLM_MODEL
-        value: openrouter/mistralai/mistral-7b-instruct:free
+        value: openrouter/openrouter/free
       - key: OPENROUTER_API_KEY
         sync: false
       - key: DEFAULT_OUTPUT_FILENAME

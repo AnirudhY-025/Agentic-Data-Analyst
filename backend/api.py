@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 import traceback
+import urllib.request
 import warnings
 from pathlib import Path
 from typing import Any
@@ -92,7 +94,7 @@ def get_current_user(x_user_id: str | None = Header(None)) -> str:
 class AnalyzeRequest(BaseModel):
     dataset_name: str
     question: str = "Analyze this dataset and surface the most important business insights."
-    model: str = "openrouter/mistralai/mistral-7b-instruct:free"
+    model: str = "openrouter/openrouter/free"
     openrouter_api_key: str | None = None
     ollama_base_url: str | None = None
     date_column: str | None = None
@@ -111,14 +113,63 @@ OLLAMA_MODELS = [
     {"id": "ollama/llama3:latest", "label": "Llama 3",                 "provider": "ollama", "free": True},
 ]
 
-OPENROUTER_FREE_MODELS = [
-    {"id": "openrouter/mistralai/mistral-7b-instruct:free",        "label": "Mistral 7B Instruct",       "provider": "openrouter", "free": True},
-    {"id": "openrouter/meta-llama/llama-3.1-8b-instruct:free",     "label": "Llama 3.1 8B Instruct",     "provider": "openrouter", "free": True},
-    {"id": "openrouter/google/gemma-2-9b-it:free",                 "label": "Gemma 2 9B IT",             "provider": "openrouter", "free": True},
-    {"id": "openrouter/qwen/qwen-2-7b-instruct:free",              "label": "Qwen 2 7B Instruct",        "provider": "openrouter", "free": True},
-    {"id": "openrouter/microsoft/phi-3-mini-128k-instruct:free",   "label": "Phi-3 Mini 128K",           "provider": "openrouter", "free": True},
-    {"id": "openrouter/nousresearch/hermes-3-llama-3.1-8b:free",   "label": "Hermes 3 Llama 3.1 8B",    "provider": "openrouter", "free": True},
+FALLBACK_OPENROUTER_FREE_MODELS = [
+    {"id": "openrouter/openrouter/free",              "label": "⚡ Auto Free Model (Recommended)", "provider": "openrouter", "free": True},
+    {"id": "openrouter/google/gemma-4-31b-it:free",    "label": "Google Gemma 4 31B",               "provider": "openrouter", "free": True},
+    {"id": "openrouter/google/gemma-4-26b-a4b-it:free", "label": "Google Gemma 4 26B",               "provider": "openrouter", "free": True},
+    {"id": "openrouter/nvidia/nemotron-3.5-lightning:free", "label": "NVIDIA Nemotron 3.5 Lightning", "provider": "openrouter", "free": True},
+    {"id": "openrouter/liquid/lfm-2.5-2.6b:free",      "label": "LiquidAI LFM 2.5 2.6B",            "provider": "openrouter", "free": True},
+    {"id": "openrouter/cohere/north-mini-code:free",    "label": "Cohere North Mini Code",           "provider": "openrouter", "free": True},
+    {"id": "openrouter/poolside/laguna-s-2.1:free",     "label": "Poolside Laguna S 2.1",            "provider": "openrouter", "free": True},
 ]
+
+_cached_openrouter_models: list[dict[str, Any]] | None = None
+_cached_openrouter_time: float = 0.0
+
+
+def get_openrouter_free_models() -> list[dict[str, Any]]:
+    """Dynamically query OpenRouter API for active free models with caching."""
+    global _cached_openrouter_models, _cached_openrouter_time
+    now = time.time()
+    # Cache for 15 minutes
+    if _cached_openrouter_models and (now - _cached_openrouter_time < 900):
+        return _cached_openrouter_models
+
+    try:
+        req = urllib.request.Request(
+            "https://openrouter.ai/api/v1/models",
+            headers={"User-Agent": "InsightFlow-AI/1.0"}
+        )
+        with urllib.request.urlopen(req, timeout=3.5) as resp:
+            data = json.loads(resp.read().decode())
+            live_models = [
+                {
+                    "id": "openrouter/openrouter/free",
+                    "label": "⚡ Auto Free Model (Recommended)",
+                    "provider": "openrouter",
+                    "free": True,
+                }
+            ]
+            for m in data.get("data", []):
+                mid = m.get("id", "")
+                pricing = m.get("pricing", {})
+                is_free = ":free" in mid or (pricing.get("prompt") == "0" and pricing.get("completion") == "0")
+                if is_free and mid != "openrouter/free":
+                    clean_name = m.get("name", mid).replace(" (free)", "").replace(" (Free)", "").strip()
+                    live_models.append({
+                        "id": f"openrouter/{mid}",
+                        "label": clean_name,
+                        "provider": "openrouter",
+                        "free": True,
+                    })
+            if len(live_models) > 1:
+                _cached_openrouter_models = live_models
+                _cached_openrouter_time = now
+                return live_models
+    except Exception as exc:
+        print(f"Notice: dynamically querying OpenRouter models fell back to verified catalog: {exc}")
+
+    return FALLBACK_OPENROUTER_FREE_MODELS
 
 
 @app.get("/api/models")
@@ -128,7 +179,7 @@ async def list_models():
     ollama_ok = is_ollama_available(timeout=0.8)
     return {
         "ollama": OLLAMA_MODELS,
-        "openrouter": OPENROUTER_FREE_MODELS,
+        "openrouter": get_openrouter_free_models(),
         "ollama_available": ollama_ok,
     }
 
@@ -410,7 +461,7 @@ async def workflow_ws(websocket: WebSocket):
                 await send({"type": "step", "step": 6, "label": "Insight & Strategy Agents: Synthesizing intelligence", "status": "done",
                             "detail": "CrewAI Ollama agents complete"})
             except Exception as exc:
-                crew_error = str(exc)
+                crew_error = f"Ollama connection notice: {str(exc)[:160]}"
                 crew_result = generate_deterministic_insights(
                     cleaned_df=cleaned_df, quality_report=quality_report, statistics=statistics,
                     correlation=correlation, outliers=outliers, trend=trend, grouping=grouping, question=req.question
@@ -418,22 +469,61 @@ async def workflow_ws(websocket: WebSocket):
                 await send({"type": "step", "step": 6, "label": "Insight & Strategy Agents: Synthesizing intelligence", "status": "done",
                             "detail": "CrewAI strategic synthesis"})
         elif req.openrouter_api_key:
-            try:
-                crew = build_crew(model_name=req.model, api_key=req.openrouter_api_key)
-                loop = asyncio.get_event_loop()
-                crew_result = await loop.run_in_executor(
-                    None, lambda: crew.kickoff(inputs={"dataset_path": str(dataset_path), "question": req.question})
-                )
-                await send({"type": "step", "step": 6, "label": "Insight & Strategy Agents: Synthesizing intelligence", "status": "done",
-                            "detail": "CrewAI OpenRouter agents complete"})
-            except Exception as exc:
-                crew_error = str(exc)
+            # Model fallback sequence to guarantee high availability and protect against retired model IDs
+            candidates = [req.model]
+            fallbacks = [
+                "openrouter/openrouter/free",
+                "openrouter/google/gemma-4-31b-it:free",
+                "openrouter/nvidia/nemotron-3.5-lightning:free",
+            ]
+            for fb in fallbacks:
+                if fb not in candidates:
+                    candidates.append(fb)
+
+            last_err = None
+            for model_candidate in candidates:
+                try:
+                    display_name = model_candidate.replace("openrouter/", "")
+                    await send({
+                        "type": "step",
+                        "step": 6,
+                        "label": f"Insight & Strategy Agents: Running CrewAI ({display_name})",
+                        "status": "running",
+                    })
+                    crew = build_crew(model_name=model_candidate, api_key=req.openrouter_api_key)
+                    loop = asyncio.get_event_loop()
+                    crew_result = await loop.run_in_executor(
+                        None, lambda: crew.kickoff(inputs={"dataset_path": str(dataset_path), "question": req.question})
+                    )
+                    if crew_result:
+                        last_err = None
+                        await send({
+                            "type": "step",
+                            "step": 6,
+                            "label": "Insight & Strategy Agents: Synthesizing intelligence",
+                            "status": "done",
+                            "detail": f"CrewAI completed ({display_name})",
+                        })
+                        break
+                except Exception as exc:
+                    last_err = exc
+                    print(f"OpenRouter candidate '{model_candidate}' failed: {exc}. Attempting next model...")
+                    continue
+
+            if not crew_result:
+                # All candidates failed (e.g. invalid API key, zero credits, or OpenRouter outage)
                 crew_result = generate_deterministic_insights(
                     cleaned_df=cleaned_df, quality_report=quality_report, statistics=statistics,
                     correlation=correlation, outliers=outliers, trend=trend, grouping=grouping, question=req.question
                 )
-                await send({"type": "step", "step": 6, "label": "Insight & Strategy Agents: Synthesizing intelligence", "status": "done",
-                            "detail": "CrewAI strategic synthesis"})
+                crew_error = f"OpenRouter LLM notice: {str(last_err)[:160]}"
+                await send({
+                    "type": "step",
+                    "step": 6,
+                    "label": "Insight & Strategy Agents: Synthesizing intelligence",
+                    "status": "done",
+                    "detail": "CrewAI strategic synthesis",
+                })
         else:
             crew_result = generate_deterministic_insights(
                 cleaned_df=cleaned_df, quality_report=quality_report, statistics=statistics,

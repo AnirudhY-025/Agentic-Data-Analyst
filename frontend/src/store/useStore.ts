@@ -53,7 +53,7 @@ export const useStore = create<AppState>((set) => ({
 
   question: 'Analyze this dataset and surface the most important business insights.',
   setQuestion: (q) => set({ question: q }),
-  model: 'openrouter/mistralai/mistral-7b-instruct:free',
+  model: 'openrouter/openrouter/free',
   setModel: (m) => set({ model: m }),
 
   workflowRunning: false,

@@ -37,6 +37,10 @@ def build_llm(model_name: str | None = None, api_key: str | None = None, ollama_
                 "OpenRouter API key is required. Please provide your free API key in Settings or the model selector (get one free at https://openrouter.ai/keys)."
             )
         os.environ["OPENROUTER_API_KEY"] = key
+        # If model is "openrouter/free", CrewAI strips "openrouter/" leaving "free",
+        # but OpenRouter expects "openrouter/free". Normalizing to "openrouter/openrouter/free" ensures correctness.
+        if name == "openrouter/free":
+            name = "openrouter/openrouter/free"
         return LLM(
             model=name,
             api_key=key,
