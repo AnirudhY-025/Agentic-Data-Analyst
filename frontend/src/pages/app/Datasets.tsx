@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
-import { Upload, Database, Trash2, Eye, RefreshCw } from 'lucide-react'
+import { Upload, Database, Eye, RefreshCw } from 'lucide-react'
 import { getDatasets, uploadDataset } from '../../lib/api'
 import { formatBytes } from '../../lib/utils'
 import { useStore } from '../../store/useStore'

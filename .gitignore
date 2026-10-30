@@ -1,0 +1,41 @@
+# Environment variables & secrets
+.env
+.env.*
+!.env.example
+*.env
+
+# Dependencies
+node_modules/
+**/node_modules/
+.venv/
+**/.venv/
+env/
+venv/
+
+# Build artifacts
+dist/
+**/dist/
+build/
+**/build/
+
+# Python cache & outputs
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+*.log
+.pytest_cache/
+.coverage
+pytest-results.xml
+
+# Dynamic data & user generated outputs
+backend/data/
+backend/outputs/
+data/
+outputs/
+charts/
+reports/
+
+# OS files
+.DS_Store
+Thumbs.db

@@ -84,7 +84,7 @@ export default function Dashboard() {
           </div>
         ) : (
           <div className="rounded-2xl border overflow-hidden" style={{ background: 'rgba(13,22,39,0.9)', borderColor: 'rgba(255,255,255,0.07)' }}>
-            {datasets.slice(0, 5).map((d, i) => (
+            {datasets.slice(0, 5).map((d) => (
               <div key={d.name} className="flex items-center justify-between px-5 py-3.5 border-b last:border-0" style={{ borderColor: 'rgba(255,255,255,0.05)' }}>
                 <div className="flex items-center gap-3">
                   <div className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: 'rgba(6,182,212,0.12)', border: '1px solid rgba(6,182,212,0.2)' }}>

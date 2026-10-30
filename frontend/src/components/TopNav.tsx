@@ -61,7 +61,7 @@ export default function TopNav({ title = 'InsightFlow AI' }: { title?: string })
             className="flex items-center gap-2 pl-1 pr-2 py-1 rounded-xl transition-all duration-200 hover:bg-white/[0.05]">
             {/* Avatar */}
             {user?.photoURL ? (
-              <img src={user.photoURL} alt="" className="w-7 h-7 rounded-full object-cover ring-1" style={{ ringColor: 'rgba(6,182,212,0.4)' }} />
+              <img src={user.photoURL} alt="" className="w-7 h-7 rounded-full object-cover ring-1 ring-cyan-500/40" />
             ) : (
               <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold text-white"
                 style={{ background: 'linear-gradient(135deg,#0891B2,#6366F1)' }}>

@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: insightflow-ai
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    region: oregon
+    healthCheckPath: /api/health
+    envVars:
+      - key: LLM_MODEL
+        value: openrouter/mistralai/mistral-7b-instruct:free
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: DEFAULT_OUTPUT_FILENAME
+        value: analysis_report
+      - key: LLM_TEMPERATURE
+        value: 0.2

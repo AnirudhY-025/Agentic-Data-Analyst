@@ -30,14 +30,17 @@ from pydantic import BaseModel
 
 warnings.warn = _original_warn
 
+from fastapi import Header, Depends, Query
 from config import (
-    ANALYSIS_DIR,
-    CHARTS_DIR,
+    get_user_data_dir,
+    get_user_outputs_dir,
+    get_user_charts_dir,
+    get_user_reports_dir,
+    get_user_analysis_dir,
     COLUMN_OVERRIDES,
-    DATA_DIR,
     DEFAULT_OUTPUT_FILENAME,
-    REPORTS_DIR,
     ensure_directories,
+    CURRENT_USER_ID,
 )
 from crew import build_crew
 from tools import (
@@ -59,7 +62,7 @@ from tools import (
 
 warnings.warn = _original_warn
 
-ensure_directories()
+
 
 app = FastAPI(title="InsightFlow AI API", version="1.0.0")
 
@@ -72,8 +75,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Serve chart images as static files
-app.mount("/charts", StaticFiles(directory=str(CHARTS_DIR)), name="charts")
+# Remove global static file mount for charts
+# app.mount("/charts", StaticFiles(directory=str(CHARTS_DIR)), name="charts")
+
+def get_current_user(x_user_id: str | None = Header(None)) -> str:
+    if not x_user_id:
+        # Fallback for now if frontend doesn't send it, but ideally raise 401
+        return "default"
+    ensure_directories(x_user_id)
+    CURRENT_USER_ID.set(x_user_id)
+    return x_user_id
 
 
 # ── Pydantic models ──────────────────────────────────────────────────────────
@@ -128,7 +139,7 @@ async def get_settings():
     key = os.environ.get("OPENROUTER_API_KEY", "")
     return {
         "openrouter_configured": bool(key and key.strip()),
-        "openrouter_key_preview": f"{key[:8]}…" if key and len(key) > 8 else None,
+        "openrouter_key_preview": "••••••••••••••••" if key and key.strip() else None,
         "ollama_base_url": DEFAULT_OLLAMA_BASE_URL,
     }
 
@@ -165,8 +176,8 @@ async def save_settings(body: SaveSettingsRequest):
 
 
 
-# ── In-memory result cache (keyed by dataset_name) ───────────────────────────
-_last_results: dict[str, Any] = {}
+# ── In-memory result cache (keyed by user_id) ───────────────────────────
+_last_results: dict[str, dict[str, Any]] = {}
 
 
 # ── Helper ───────────────────────────────────────────────────────────────────
@@ -191,28 +202,31 @@ async def health():
 
 
 @app.post("/api/upload")
-async def upload_dataset(file: UploadFile = File(...)):
+async def upload_dataset(file: UploadFile = File(...), user_id: str = Depends(get_current_user)):
     allowed = {".csv", ".xlsx", ".xls"}
     suffix = Path(file.filename).suffix.lower()
     if suffix not in allowed:
         raise HTTPException(400, f"Unsupported file type: {suffix}")
-    dest = DATA_DIR / file.filename
+    data_dir = get_user_data_dir(user_id)
+    dest = data_dir / file.filename
     dest.write_bytes(await file.read())
     return {"filename": file.filename, "size": dest.stat().st_size}
 
 
 @app.get("/api/datasets")
-async def list_datasets():
+async def list_datasets(user_id: str = Depends(get_current_user)):
     files = []
-    for p in DATA_DIR.iterdir():
-        if p.suffix.lower() in {".csv", ".xlsx", ".xls"} and not p.name.startswith("."):
-            files.append({"name": p.name, "size": p.stat().st_size})
+    data_dir = get_user_data_dir(user_id)
+    if data_dir.exists():
+        for p in data_dir.iterdir():
+            if p.suffix.lower() in {".csv", ".xlsx", ".xls"} and not p.name.startswith("."):
+                files.append({"name": p.name, "size": p.stat().st_size})
     return {"datasets": sorted(files, key=lambda x: x["name"])}
 
 
 @app.get("/api/datasets/{name}/preview")
-async def preview_dataset(name: str, rows: int = 20):
-    path = DATA_DIR / name
+async def preview_dataset(name: str, rows: int = 20, user_id: str = Depends(get_current_user)):
+    path = get_user_data_dir(user_id) / name
     if not path.exists():
         raise HTTPException(404, "Dataset not found")
     df = load_dataset(path)
@@ -225,8 +239,8 @@ async def preview_dataset(name: str, rows: int = 20):
 
 
 @app.get("/api/datasets/{name}/columns")
-async def detect_columns(name: str):
-    path = DATA_DIR / name
+async def detect_columns(name: str, user_id: str = Depends(get_current_user)):
+    path = get_user_data_dir(user_id) / name
     if not path.exists():
         raise HTTPException(404, "Dataset not found")
     df = load_dataset(path)
@@ -238,38 +252,50 @@ async def detect_columns(name: str):
 
 
 @app.get("/api/analysis")
-async def get_last_analysis():
-    if not _last_results:
+async def get_last_analysis(user_id: str = Depends(get_current_user)):
+    user_results = _last_results.get(user_id, {})
+    if not user_results:
         raise HTTPException(404, "No analysis results available. Run analyze first.")
-    return _last_results
+    return user_results
 
 
 @app.get("/api/charts")
-async def list_charts():
+async def list_charts(user_id: str = Depends(get_current_user)):
     charts = []
-    for p in sorted(CHARTS_DIR.iterdir()):
-        if p.suffix.lower() in {".png", ".jpg", ".jpeg"}:
-            charts.append({"filename": p.name, "url": f"/charts/{p.name}"})
+    charts_dir = get_user_charts_dir(user_id)
+    if charts_dir.exists():
+        for p in sorted(charts_dir.iterdir()):
+            if p.suffix.lower() in {".png", ".jpg", ".jpeg"}:
+                charts.append({"filename": p.name, "url": f"/api/charts/image/{p.name}"})
     return {"charts": charts}
+
+@app.get("/api/charts/image/{filename}")
+async def serve_chart(filename: str, user_id: str = Depends(get_current_user)):
+    path = get_user_charts_dir(user_id) / filename
+    if not path.exists():
+        raise HTTPException(404, "Chart not found")
+    return FileResponse(str(path))
 
 
 @app.get("/api/reports")
-async def list_reports():
+async def list_reports(user_id: str = Depends(get_current_user)):
     reports = []
-    for p in sorted(REPORTS_DIR.iterdir()):
-        if p.suffix.lower() in {".md", ".pdf"}:
-            reports.append({
-                "filename": p.name,
-                "format": p.suffix.lstrip(".").upper(),
-                "size": p.stat().st_size,
-                "url": f"/api/reports/{p.name}/download",
-            })
+    reports_dir = get_user_reports_dir(user_id)
+    if reports_dir.exists():
+        for p in sorted(reports_dir.iterdir()):
+            if p.suffix.lower() in {".md", ".pdf"}:
+                reports.append({
+                    "filename": p.name,
+                    "format": p.suffix.lstrip(".").upper(),
+                    "size": p.stat().st_size,
+                    "url": f"/api/reports/{p.name}/download",
+                })
     return {"reports": reports}
 
 
 @app.get("/api/reports/{filename}/download")
-async def download_report(filename: str):
-    path = REPORTS_DIR / filename
+async def download_report(filename: str, user_id: str = Depends(get_current_user)):
+    path = get_user_reports_dir(user_id) / filename
     if not path.exists():
         raise HTTPException(404, "Report not found")
     media_type = "application/pdf" if path.suffix == ".pdf" else "text/markdown"
@@ -277,8 +303,8 @@ async def download_report(filename: str):
 
 
 @app.get("/api/reports/{filename}/content")
-async def report_content(filename: str):
-    path = REPORTS_DIR / filename
+async def report_content(filename: str, user_id: str = Depends(get_current_user)):
+    path = get_user_reports_dir(user_id) / filename
     if not path.exists():
         raise HTTPException(404, "Report not found")
     if path.suffix != ".md":
@@ -289,6 +315,10 @@ async def report_content(filename: str):
 # ── WebSocket — live workflow streaming ──────────────────────────────────────
 @app.websocket("/ws/workflow")
 async def workflow_ws(websocket: WebSocket):
+    user_id = websocket.query_params.get("user_id", "default")
+    ensure_directories(user_id)
+    CURRENT_USER_ID.set(user_id)
+    
     await websocket.accept()
     try:
         raw = await websocket.receive_text()
@@ -302,7 +332,7 @@ async def workflow_ws(websocket: WebSocket):
         await websocket.send_text(json.dumps(_safe(event)))
 
     try:
-        dataset_path = DATA_DIR / req.dataset_name
+        dataset_path = get_user_data_dir(user_id) / req.dataset_name
         if not dataset_path.exists():
             await send({"type": "error", "message": f"Dataset not found: {req.dataset_name}"})
             return
@@ -344,6 +374,7 @@ async def workflow_ws(websocket: WebSocket):
             "statistics": statistics, "correlation": correlation,
             "trend": trend, "distribution": distribution,
             "grouping": grouping, "outliers": outliers, "question": req.question,
+            "user_id": user_id
         })
         chart_count = len(visualizations.get("charts", []))
         await send({"type": "step", "step": 4, "label": "Generating visualizations", "status": "done",
@@ -370,8 +401,9 @@ async def workflow_ws(websocket: WebSocket):
             "business_insights": [],
             "recommendations": [],
         }
-        markdown_path = generate_markdown_report(report_payload, REPORTS_DIR / f"{DEFAULT_OUTPUT_FILENAME}.md")
-        pdf_path = generate_pdf_report(markdown_path, REPORTS_DIR / f"{DEFAULT_OUTPUT_FILENAME}.pdf")
+        reports_dir = get_user_reports_dir(user_id)
+        markdown_path = generate_markdown_report(report_payload, reports_dir / f"{DEFAULT_OUTPUT_FILENAME}.md")
+        pdf_path = generate_pdf_report(markdown_path, reports_dir / f"{DEFAULT_OUTPUT_FILENAME}.pdf")
         await send({"type": "step", "step": 5, "label": "Building Markdown & PDF reports", "status": "done",
                     "detail": f"MD + PDF saved"})
 
@@ -394,7 +426,7 @@ async def workflow_ws(websocket: WebSocket):
 
         # Assemble and cache results
         charts_list = [
-            {"filename": Path(c["path"]).name, "url": f"/charts/{Path(c['path']).name}", "title": c.get("title", ""), "chart_type": c.get("chart_type", "")}
+            {"filename": Path(c["path"]).name, "url": f"/api/charts/image/{Path(c['path']).name}", "title": c.get("title", ""), "chart_type": c.get("chart_type", "")}
             for c in visualizations.get("charts", [])
         ]
         results = {
@@ -409,13 +441,13 @@ async def workflow_ws(websocket: WebSocket):
             "crew_result": str(crew_result) if crew_result else None,
             "crew_error": crew_error,
             "reports": {
-                "markdown": str(markdown_path),
-                "pdf": str(pdf_path),
+                "markdown": str(markdown_path.name),
+                "pdf": str(pdf_path.name),
             },
             "dataset_overview": report_payload["dataset_overview"],
             "clean_summary": clean_summary,
         }
-        _last_results.update(results)
+        _last_results[user_id] = results
 
         await send({"type": "complete", "results": results})
 
@@ -431,5 +463,25 @@ async def workflow_ws(websocket: WebSocket):
             pass
 
 
+# ── Production SPA Serving ───────────────────────────────────────────────────
+FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+if (FRONTEND_DIST / "assets").exists():
+    app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIST / "assets")), name="assets")
+
+@app.get("/{full_path:path}")
+async def serve_spa(full_path: str):
+    # Pass through API, WebSocket, and chart routes
+    if full_path.startswith("api/") or full_path.startswith("ws/") or full_path.startswith("charts/"):
+        raise HTTPException(404, "Not Found")
+    requested_file = FRONTEND_DIST / full_path
+    if requested_file.exists() and requested_file.is_file():
+        return FileResponse(requested_file)
+    index_file = FRONTEND_DIST / "index.html"
+    if index_file.exists():
+        return FileResponse(index_file)
+    return JSONResponse({"status": "InsightFlow API is running. Frontend build not present."})
+
+
 if __name__ == "__main__":
-    uvicorn.run("api:app", host="0.0.0.0", port=8000, reload=True)
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run("api:app", host="0.0.0.0", port=port, reload=False)

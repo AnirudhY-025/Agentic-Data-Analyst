@@ -1,12 +1,9 @@
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
-import { Settings, Cpu, Database, Globe, Info, Eye, EyeOff, CheckCircle2, Loader2, AlertCircle, ExternalLink } from 'lucide-react'
-import { useStore } from '../../store/useStore'
+import { Cpu, Database, Globe, Info, Eye, EyeOff, CheckCircle2, Loader2, AlertCircle, ExternalLink } from 'lucide-react'
 import { getSettings, saveSettings } from '../../lib/api'
 
 export default function SettingsPage() {
-  const { model, setModel } = useStore()
-
   // OpenRouter key state
   const [keyInput, setKeyInput] = useState('')
   const [showKey, setShowKey] = useState(false)
@@ -14,13 +11,11 @@ export default function SettingsPage() {
   const [saveSuccess, setSaveSuccess] = useState(false)
   const [saveError, setSaveError] = useState('')
   const [configured, setConfigured] = useState(false)
-  const [keyPreview, setKeyPreview] = useState<string | null>(null)
   const [settingsLoaded, setSettingsLoaded] = useState(false)
 
   useEffect(() => {
     getSettings().then(d => {
       setConfigured(d.openrouter_configured)
-      setKeyPreview(d.openrouter_key_preview)
       setSettingsLoaded(true)
     }).catch(() => setSettingsLoaded(true))
   }, [])
@@ -34,7 +29,6 @@ export default function SettingsPage() {
     try {
       const res = await saveSettings({ openrouter_api_key: keyInput.trim() })
       setConfigured(res.openrouter_configured)
-      setKeyPreview(`${keyInput.trim().slice(0, 8)}…`)
       setKeyInput('')
       setSaveSuccess(true)
       setTimeout(() => setSaveSuccess(false), 3000)
@@ -70,7 +64,7 @@ export default function SettingsPage() {
         {settingsLoaded && (
           <div className="flex items-center gap-2 mb-4 px-3 py-2 rounded-lg" style={{ background: configured ? 'rgba(16,185,129,0.08)' : 'rgba(255,255,255,0.03)', border: `1px solid ${configured ? 'rgba(16,185,129,0.2)' : 'rgba(255,255,255,0.06)'}` }}>
             {configured
-              ? <><CheckCircle2 size={13} className="text-emerald-400 flex-shrink-0" /><span className="text-xs text-emerald-300">Configured — <code className="text-emerald-400">{keyPreview}</code></span></>
+              ? <><CheckCircle2 size={13} className="text-emerald-400 flex-shrink-0" /><span className="text-xs text-emerald-300 font-medium">Secured & Active — <code className="text-emerald-400 font-mono tracking-widest text-[11px]">••••••••••••••••</code></span></>
               : <><AlertCircle size={13} className="text-slate-500 flex-shrink-0" /><span className="text-xs text-slate-500">Not configured — OpenRouter models are locked</span></>}
           </div>
         )}
@@ -82,7 +76,7 @@ export default function SettingsPage() {
               type={showKey ? 'text' : 'password'}
               value={keyInput}
               onChange={e => setKeyInput(e.target.value)}
-              placeholder={configured ? 'Paste new key to update…' : 'sk-or-v1-…'}
+              placeholder={configured ? 'Paste new key to replace existing…' : 'Enter API key…'}
               className="w-full px-3 py-2.5 pr-10 rounded-xl text-sm text-slate-200 placeholder:text-slate-600 outline-none transition-all"
               style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', fontFamily: 'monospace' }}
               onFocus={e => e.target.style.borderColor = 'rgba(139,92,246,0.5)'}
@@ -133,13 +127,15 @@ export default function SettingsPage() {
         </div>
       </SettingsSection>
 
-      {/* ── API Endpoint ── */}
-      <SettingsSection title="API Endpoint" icon={Database} color="#6366F1" delay={0.15}>
-        <label className="block text-xs font-semibold text-slate-400 mb-2 uppercase tracking-wider">FastAPI Backend URL</label>
-        <input readOnly value="http://localhost:8000"
-          className="w-full px-3 py-2.5 rounded-xl text-sm text-slate-400 outline-none"
-          style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }} />
-        <InfoBox className="mt-2">All <code className="text-cyan-400">/api/*</code> requests are proxied from the React dev server to the FastAPI backend on port 8000.</InfoBox>
+      {/* ── System Status ── */}
+      <SettingsSection title="System Status" icon={Database} color="#6366F1" delay={0.15}>
+        <div className="flex items-center justify-between p-3 rounded-xl" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+            <span className="text-xs font-semibold text-slate-200">Analysis Engine Backend</span>
+          </div>
+          <span className="text-xs font-medium text-emerald-400 bg-emerald-500/10 px-2.5 py-0.5 rounded-full border border-emerald-500/20">Operational</span>
+        </div>
       </SettingsSection>
 
       {/* ── About ── */}

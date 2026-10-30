@@ -1,0 +1,7 @@
+{
+  "total_rows": 10,
+  "outlier_column": "revenue",
+  "outlier_value_approx": 9000,
+  "strong_correlation_pair": ["revenue", "profit"],
+  "top_category": "Electronics"
+}

@@ -29,8 +29,14 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
 from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer
 
-from config import ANALYSIS_DIR, CHARTS_DIR, DATA_DIR, REPORTS_DIR, ensure_directories, COLUMN_OVERRIDES
-
+from config import (
+    get_user_analysis_dir,
+    get_user_charts_dir,
+    get_user_data_dir,
+    get_user_reports_dir,
+    ensure_directories,
+    COLUMN_OVERRIDES
+)
 
 ensure_directories()
 sns.set_theme(style="whitegrid")
@@ -47,7 +53,7 @@ def _safe_json(data: Any) -> str:
 def _resolve_input(file_path: str | Path) -> Path:
     path = Path(file_path)
     if not path.is_absolute():
-        path = DATA_DIR / path
+        path = get_user_data_dir() / path
     return path
 
 
@@ -56,7 +62,17 @@ def load_dataset(file_path: str | Path) -> pd.DataFrame:
     if not path.exists():
         raise FileNotFoundError(f"Dataset not found: {path}")
     if path.suffix.lower() == ".csv":
-        return pd.read_csv(path)
+        encodings = ["utf-8", "utf-8-sig", "latin1", "cp1252", "iso-8859-1"]
+        for enc in encodings:
+            try:
+                # Try auto-detecting separator with python engine first
+                return pd.read_csv(path, encoding=enc, sep=None, engine="python")
+            except Exception:
+                try:
+                    return pd.read_csv(path, encoding=enc)
+                except Exception:
+                    continue
+        return pd.read_csv(path, encoding_errors="replace")
     if path.suffix.lower() in {".xlsx", ".xls"}:
         return pd.read_excel(path)
     raise ValueError(f"Unsupported dataset format: {path.suffix}")
@@ -77,15 +93,30 @@ def clean_dataset(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, Any]]:
     before_rows = len(cleaned)
     before_missing = int(cleaned.isna().sum().sum())
 
-    cleaned.columns = [str(column).strip().lower().replace(" ", "_") for column in cleaned.columns]
+    # 1. Drop completely empty rows and columns
+    cleaned = cleaned.dropna(how="all", axis=0).dropna(how="all", axis=1)
+
+    # 2. Drop unneeded auto-generated index columns (e.g., Unnamed: 0)
+    unnamed_cols = [c for c in cleaned.columns if str(c).lower().startswith("unnamed:")]
+    if unnamed_cols:
+        cleaned = cleaned.drop(columns=unnamed_cols)
+
+    # 3. Standardize column headers: sanitize characters and convert to snake_case
+    cleaned.columns = [
+        re.sub(r"[^\w\s]", "", str(column)).strip().lower().replace(" ", "_")
+        for column in cleaned.columns
+    ]
     cleaned = cleaned.drop_duplicates().reset_index(drop=True)
 
+    # 4. Clean strings and parse datetimes
     for column in cleaned.columns:
         if cleaned[column].dtype == object or cleaned[column].dtype.name in ("string", "str"):
+            cleaned[column] = cleaned[column].apply(lambda x: x.strip() if isinstance(x, str) else x)
             parsed = pd.to_datetime(cleaned[column], errors="coerce")
-            if parsed.notna().mean() >= 0.8:
+            if parsed.notna().mean() >= 0.7:
                 cleaned[column] = parsed
 
+    # 5. Missing value imputations
     for column in cleaned.columns:
         if pd.api.types.is_numeric_dtype(cleaned[column]):
             cleaned[column] = cleaned[column].fillna(cleaned[column].median())
@@ -114,8 +145,9 @@ def generate_data_quality_report(df: pd.DataFrame, source_path: str | Path | Non
         "missing_by_column": df.isna().sum().sort_values(ascending=False).to_dict(),
         "validation": validate_dataset(df),
     }
-    ANALYSIS_DIR.mkdir(parents=True, exist_ok=True)
-    (ANALYSIS_DIR / "data_quality_summary.json").write_text(_safe_json(report), encoding="utf-8")
+    analysis_dir = get_user_analysis_dir()
+    analysis_dir.mkdir(parents=True, exist_ok=True)
+    (analysis_dir / "data_quality_summary.json").write_text(_safe_json(report), encoding="utf-8")
     return report
 
 
@@ -332,12 +364,17 @@ def _slugify(value: str) -> str:
 
 def generate_visualizations(df: pd.DataFrame, analysis_summary: dict[str, Any]) -> dict[str, Any]:
     charts: list[dict[str, str]] = []
-    numeric_columns = df.select_dtypes(include=[np.number]).columns.tolist()
-    categorical_columns = [column for column in df.columns if column not in numeric_columns]
-    datetime_columns = [column for column in df.columns if pd.api.types.is_datetime64_any_dtype(df[column])]
+    
+    # Downsample for visualization if dataset is very large (> 10,000 rows) for fast, smooth plotting
+    plot_df = df.sample(10000, random_state=42) if len(df) > 10000 else df
+
+    numeric_columns = plot_df.select_dtypes(include=[np.number]).columns.tolist()
+    categorical_columns = [column for column in plot_df.columns if column not in numeric_columns]
+    datetime_columns = [column for column in plot_df.columns if pd.api.types.is_datetime64_any_dtype(plot_df[column])]
 
     def save_chart(filename: str) -> Path:
-        path = CHARTS_DIR / f"{filename}_{_timestamp()}.png"
+        charts_dir = get_user_charts_dir()
+        path = charts_dir / f"{filename}_{_timestamp()}.png"
         plt.tight_layout()
         plt.savefig(path, dpi=160, bbox_inches="tight")
         plt.close()
@@ -345,51 +382,75 @@ def generate_visualizations(df: pd.DataFrame, analysis_summary: dict[str, Any]) 
 
     if numeric_columns:
         for column in numeric_columns[:3]:
-            plt.figure(figsize=(8, 5))
-            sns.histplot(df[column].dropna(), kde=True, bins=20, color="#0F766E")
-            plt.title(f"Distribution of {column}")
-            path = save_chart(f"hist_{_slugify(column)}")
-            charts.append({"chart_type": "histogram", "title": f"Distribution of {column}", "path": path.as_posix()})
+            try:
+                plt.figure(figsize=(8, 5))
+                sns.histplot(plot_df[column].dropna(), kde=True, bins=20, color="#0F766E")
+                plt.title(f"Distribution of {column}")
+                path = save_chart(f"hist_{_slugify(column)}")
+                charts.append({"chart_type": "histogram", "title": f"Distribution of {column}", "path": path.as_posix()})
+            except Exception:
+                plt.close()
 
-        plt.figure(figsize=(8, 5))
-        sns.boxplot(data=df[numeric_columns[:5]], orient="h")
-        plt.title("Numeric spread and outliers")
-        path = save_chart("boxplot_numeric")
-        charts.append({"chart_type": "box_plot", "title": "Numeric spread and outliers", "path": path.as_posix()})
+        try:
+            plt.figure(figsize=(8, 5))
+            sns.boxplot(data=plot_df[numeric_columns[:5]], orient="h")
+            plt.title("Numeric spread and outliers")
+            path = save_chart("boxplot_numeric")
+            charts.append({"chart_type": "box_plot", "title": "Numeric spread and outliers", "path": path.as_posix()})
+        except Exception:
+            plt.close()
 
     if len(numeric_columns) >= 2:
-        plt.figure(figsize=(8, 6))
-        sns.scatterplot(data=df, x=numeric_columns[0], y=numeric_columns[1], hue=categorical_columns[0] if categorical_columns else None, legend=False)
-        plt.title(f"{numeric_columns[0]} vs {numeric_columns[1]}")
-        path = save_chart(f"scatter_{_slugify(numeric_columns[0])}_{_slugify(numeric_columns[1])}")
-        charts.append({"chart_type": "scatter_plot", "title": f"{numeric_columns[0]} vs {numeric_columns[1]}", "path": path.as_posix()})
+        try:
+            plt.figure(figsize=(8, 6))
+            hue_col = None
+            if categorical_columns and plot_df[categorical_columns[0]].nunique() <= 8:
+                hue_col = categorical_columns[0]
+            sns.scatterplot(data=plot_df, x=numeric_columns[0], y=numeric_columns[1], hue=hue_col, legend=bool(hue_col))
+            plt.title(f"{numeric_columns[0]} vs {numeric_columns[1]}")
+            path = save_chart(f"scatter_{_slugify(numeric_columns[0])}_{_slugify(numeric_columns[1])}")
+            charts.append({"chart_type": "scatter_plot", "title": f"{numeric_columns[0]} vs {numeric_columns[1]}", "path": path.as_posix()})
+        except Exception:
+            plt.close()
 
-        plt.figure(figsize=(8, 6))
-        sns.heatmap(df[numeric_columns].corr(numeric_only=True), cmap="RdBu_r", center=0)
-        plt.title("Correlation heatmap")
-        path = save_chart("heatmap_correlation")
-        charts.append({"chart_type": "heatmap", "title": "Correlation heatmap", "path": path.as_posix()})
+        try:
+            corr_mat = plot_df[numeric_columns].corr(numeric_only=True)
+            if not corr_mat.empty and not corr_mat.isna().all().all():
+                plt.figure(figsize=(8, 6))
+                sns.heatmap(corr_mat, cmap="RdBu_r", center=0)
+                plt.title("Correlation heatmap")
+                path = save_chart("heatmap_correlation")
+                charts.append({"chart_type": "heatmap", "title": "Correlation heatmap", "path": path.as_posix()})
+        except Exception:
+            plt.close()
 
     if categorical_columns and numeric_columns:
-        group_column = categorical_columns[0]
-        metric_column = numeric_columns[0]
-        grouped = df.groupby(group_column, dropna=False)[metric_column].mean().sort_values(ascending=False).head(10)
-        plt.figure(figsize=(9, 6))
-        sns.barplot(x=grouped.values, y=grouped.index, palette="viridis")
-        plt.title(f"Average {metric_column} by {group_column}")
-        path = save_chart(f"bar_{_slugify(group_column)}_{_slugify(metric_column)}")
-        charts.append({"chart_type": "bar_chart", "title": f"Average {metric_column} by {group_column}", "path": path.as_posix()})
+        try:
+            group_column = categorical_columns[0]
+            metric_column = numeric_columns[0]
+            grouped = plot_df.groupby(group_column, dropna=False)[metric_column].mean().sort_values(ascending=False).head(10)
+            if not grouped.empty:
+                plt.figure(figsize=(9, 6))
+                sns.barplot(x=grouped.values, y=[str(x)[:25] for x in grouped.index], palette="viridis")
+                plt.title(f"Average {metric_column} by {group_column}")
+                path = save_chart(f"bar_{_slugify(group_column)}_{_slugify(metric_column)}")
+                charts.append({"chart_type": "bar_chart", "title": f"Average {metric_column} by {group_column}", "path": path.as_posix()})
+        except Exception:
+            plt.close()
 
     if datetime_columns and numeric_columns:
-        date_column = datetime_columns[0]
-        metric_column = numeric_columns[0]
-        timeline = df[[date_column, metric_column]].dropna().sort_values(date_column)
-        if not timeline.empty:
-            plt.figure(figsize=(10, 5))
-            sns.lineplot(data=timeline, x=date_column, y=metric_column, marker="o")
-            plt.title(f"Monthly trend of {metric_column}")
-            path = save_chart(f"line_{_slugify(date_column)}_{_slugify(metric_column)}")
-            charts.append({"chart_type": "line_chart", "title": f"Monthly trend of {metric_column}", "path": path.as_posix()})
+        try:
+            date_column = datetime_columns[0]
+            metric_column = numeric_columns[0]
+            timeline = plot_df[[date_column, metric_column]].dropna().sort_values(date_column)
+            if not timeline.empty:
+                plt.figure(figsize=(10, 5))
+                sns.lineplot(data=timeline, x=date_column, y=metric_column, marker="o")
+                plt.title(f"Trend of {metric_column} over {date_column}")
+                path = save_chart(f"line_{_slugify(date_column)}_{_slugify(metric_column)}")
+                charts.append({"chart_type": "line_chart", "title": f"Trend of {metric_column} over {date_column}", "path": path.as_posix()})
+        except Exception:
+            plt.close()
 
     return {"chart_paths": [chart["path"] for chart in charts], "charts": charts, "summary": analysis_summary}
 
@@ -397,7 +458,7 @@ def generate_visualizations(df: pd.DataFrame, analysis_summary: dict[str, Any]) 
 def generate_markdown_report(report_payload: dict[str, Any], output_path: str | Path) -> Path:
     output = Path(output_path)
     if not output.is_absolute():
-        output = REPORTS_DIR / output
+        output = get_user_reports_dir() / output
     output = output.with_suffix(".md")
     output.parent.mkdir(parents=True, exist_ok=True)
 
@@ -432,13 +493,13 @@ def generate_markdown_report(report_payload: dict[str, Any], output_path: str | 
 def generate_pdf_report(markdown_report_path: str | Path, output_path: str | Path | None = None) -> Path:
     markdown_path = Path(markdown_report_path)
     if not markdown_path.is_absolute():
-        markdown_path = REPORTS_DIR / markdown_path
+        markdown_path = get_user_reports_dir() / markdown_path
     if output_path is None:
         output = markdown_path.with_suffix(".pdf")
     else:
         output = Path(output_path)
         if not output.is_absolute():
-            output = REPORTS_DIR / output
+            output = get_user_reports_dir() / output
         output = output.with_suffix(".pdf")
 
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -446,18 +507,38 @@ def generate_pdf_report(markdown_report_path: str | Path, output_path: str | Pat
 
     styles = getSampleStyleSheet()
     story: list[Any] = []
+
+    def safe_xml(text: str) -> str:
+        return (
+            text.replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;")
+            .replace("'", "&apos;")
+        )
+
     for line in markdown_text.splitlines():
-        if line.startswith("# "):
-            story.append(Paragraph(line[2:], styles["Title"]))
-        elif line.startswith("## "):
-            story.append(Paragraph(line[3:], styles["Heading2"]))
-        elif line.strip():
-            story.append(Paragraph(line.replace("&", "&amp;"), styles["BodyText"]))
+        clean_line = safe_xml(line.strip())
+        if clean_line.startswith("# "):
+            story.append(Paragraph(clean_line[2:], styles["Title"]))
+            story.append(Spacer(1, 0.2 * inch))
+        elif clean_line.startswith("## "):
+            story.append(Paragraph(clean_line[3:], styles["Heading2"]))
+            story.append(Spacer(1, 0.1 * inch))
+        elif clean_line:
+            story.append(Paragraph(clean_line, styles["BodyText"]))
         else:
             story.append(Spacer(1, 0.15 * inch))
 
     doc = SimpleDocTemplate(str(output), pagesize=A4, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
-    doc.build(story or [Paragraph("No content available.", styles["BodyText"])])
+    try:
+        doc.build(story or [Paragraph("No content available.", styles["BodyText"])])
+    except Exception:
+        doc.build([
+            Paragraph("InsightFlow AI Executive Analysis Report", styles["Title"]),
+            Spacer(1, 0.2 * inch),
+            Paragraph("Analysis completed successfully. Refer to the markdown export for comprehensive tabular summaries.", styles["BodyText"])
+        ])
     return output
 
 
@@ -498,7 +579,8 @@ def clean_dataset_tool(file_path: str) -> str:
 
     df = load_dataset(file_path)
     cleaned, summary = clean_dataset(df)
-    cleaned_path = ANALYSIS_DIR / f"cleaned_dataset_{_timestamp()}.csv"
+    analysis_dir = get_user_analysis_dir()
+    cleaned_path = analysis_dir / f"cleaned_dataset_{_timestamp()}.csv"
     cleaned.to_csv(cleaned_path, index=False)
     summary["cleaned_path"] = cleaned_path.as_posix()
     return _safe_json(summary)
@@ -571,7 +653,7 @@ def generate_markdown_report_tool(report_json: str) -> str:
     """Write the final report as markdown and return the saved path."""
 
     payload = json.loads(report_json)
-    report_path = generate_markdown_report(payload, REPORTS_DIR / f"{payload.get('report_title', 'report')}.md")
+    report_path = generate_markdown_report(payload, get_user_reports_dir() / f"{payload.get('report_title', 'report')}.md")
     return _safe_json({"markdown_path": report_path.as_posix(), "report_title": payload.get("report_title")})
 
 

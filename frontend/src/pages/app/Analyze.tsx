@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Upload, Sparkles, CheckCircle2, AlertCircle, Loader2, ChevronDown, ChevronUp, Play, Cpu, Globe, Lock } from 'lucide-react'
+import { Upload, CheckCircle2, AlertCircle, Loader2, ChevronDown, ChevronUp, Play, Cpu, Globe, Lock } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { getDatasets, getColumns, uploadDataset, createWorkflowSocket, getModels, type WorkflowEvent, type ModelEntry } from '../../lib/api'
 import { useStore } from '../../store/useStore'
@@ -25,7 +25,7 @@ export default function Analyze() {
   const { selectedDataset, setSelectedDataset, question, setQuestion, model, setModel,
     dateColumn, metricColumn, groupColumn, setColumnOverrides,
     workflowRunning, workflowDone, steps, workflowError,
-    startWorkflow, handleWorkflowEvent, resetWorkflow } = useStore()
+    startWorkflow, handleWorkflowEvent } = useStore()
 
   const navigate = useNavigate()
 

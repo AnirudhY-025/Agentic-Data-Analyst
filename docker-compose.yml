@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+  agentic-data-analyst:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: insightflow-ai
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - LLM_MODEL=${LLM_MODEL:-ollama/qwen2.5:3b}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - LLM_TEMPERATURE=${LLM_TEMPERATURE:-0.2}
+      - DEFAULT_OUTPUT_FILENAME=analysis_report
+    volumes:
+      # Persistent storage for user uploaded datasets and generated reports/charts
+      - ./data:/app/backend/data
+      - ./outputs:/app/backend/outputs
+    extra_hosts:
+      # Allows the Docker container to communicate with Ollama running on the host machine
+      - "host.docker.internal:host-gateway"
+
+# Optional: To run Ollama completely containerized alongside the app, uncomment below:
+#  ollama:
+#    image: ollama/ollama:latest
+#    container_name: ollama-service
+#    restart: unless-stopped
+#    ports:
+#      - "11434:11434"
+#    volumes:
+#      - ollama_models:/root/.ollama
+# volumes:
+#   ollama_models:

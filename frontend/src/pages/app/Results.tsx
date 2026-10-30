@@ -3,7 +3,7 @@ import { motion } from 'framer-motion'
 import { BarChart3, TrendingUp, AlertTriangle, Users, Activity, Layers, GitBranch, Image, Bot } from 'lucide-react'
 import { useStore } from '../../store/useStore'
 import { getAnalysis } from '../../lib/api'
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, ScatterChart, Scatter, Legend } from 'recharts'
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts'
 import ReactMarkdown from 'react-markdown'
 
 const TABS = [

@@ -3,16 +3,43 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from dotenv import load_dotenv
+from contextvars import ContextVar
 
 load_dotenv(override=True)
 
+CURRENT_USER_ID = ContextVar("user_id", default="default")
+
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-DATA_DIR = PROJECT_ROOT / "data"
-OUTPUTS_DIR = PROJECT_ROOT / "outputs"
-CHARTS_DIR = OUTPUTS_DIR / "charts"
-REPORTS_DIR = OUTPUTS_DIR / "reports"
-ANALYSIS_DIR = OUTPUTS_DIR / "analysis"
+def get_user_data_dir(user_id: str | None = None) -> Path:
+    uid = user_id or CURRENT_USER_ID.get()
+    d = PROJECT_ROOT / "data" / uid
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+def get_user_outputs_dir(user_id: str | None = None) -> Path:
+    uid = user_id or CURRENT_USER_ID.get()
+    d = PROJECT_ROOT / "outputs" / uid
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+def get_user_charts_dir(user_id: str | None = None) -> Path:
+    uid = user_id or CURRENT_USER_ID.get()
+    d = get_user_outputs_dir(uid) / "charts"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+def get_user_reports_dir(user_id: str | None = None) -> Path:
+    uid = user_id or CURRENT_USER_ID.get()
+    d = get_user_outputs_dir(uid) / "reports"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+def get_user_analysis_dir(user_id: str | None = None) -> Path:
+    uid = user_id or CURRENT_USER_ID.get()
+    d = get_user_outputs_dir(uid) / "analysis"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
 DEFAULT_LLM_MODEL = os.getenv("LLM_MODEL", "ollama/qwen2.5:3b")
 DEFAULT_OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
@@ -29,6 +56,9 @@ COLUMN_OVERRIDES = {
 }
 
 
-def ensure_directories() -> None:
-    for directory in [DATA_DIR, OUTPUTS_DIR, CHARTS_DIR, REPORTS_DIR, ANALYSIS_DIR]:
-        directory.mkdir(parents=True, exist_ok=True)
+def ensure_directories(user_id: str | None = None) -> None:
+    get_user_data_dir(user_id)
+    get_user_outputs_dir(user_id)
+    get_user_charts_dir(user_id)
+    get_user_reports_dir(user_id)
+    get_user_analysis_dir(user_id)

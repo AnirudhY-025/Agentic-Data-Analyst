@@ -1,49 +1,82 @@
-# 🧠 Agentic Data Analyst
+# 🧠 Agentic Data Analyst (InsightFlow AI)
 
-An advanced, AI-powered data analysis platform that utilizes a multi-agent system to automate data cleaning, analysis, visualization, and reporting. 
+An enterprise-ready, AI-powered autonomous data analysis platform that orchestrates a multi-agent system to automate data cleaning, exploratory data analysis (EDA), visualization generation, and executive PDF reporting for real-world datasets.
 
-![Banner](./frontend/public/favicon.svg) <!-- Replace with actual banner if available -->
+---
 
 ## 🌟 Overview
 
-Agentic Data Analyst acts as your personal data science team. Instead of manually writing Pandas code or configuring BI dashboards, you simply upload your dataset and ask questions in plain English. 
+Agentic Data Analyst acts as an autonomous data science team. Instead of manually writing Pandas scripts, data cleaning pipelines, or configuring BI dashboards, users simply upload any tabular dataset (CSV, Excel) and ask analytical questions in plain English.
 
-Under the hood, it uses a **6-Agent Sequential Pipeline** (via CrewAI) to route your request through specialized AI personas (Planner, Data Prep, Analyst, Visualization, Insight, and Reporter).
+Under the hood, it coordinates a **6-Agent Sequential Pipeline** (powered by CrewAI):
+1. **Planner Agent**: Interprets business objectives and formulates an analytical roadmap.
+2. **Data Prep Agent**: Cleans messy data, sanitizes schemas, and imputes missing values.
+3. **Analyst Agent**: Computes summary statistics, distributions, correlations, and outliers.
+4. **Visualization Agent**: Dynamically generates publication-ready Matplotlib and Seaborn charts.
+5. **Insight Agent**: Extracts actionable business takeaways and strategic recommendations.
+6. **Reporter Agent**: Compiles findings into interactive dashboards, Markdown, and downloadable executive PDFs.
 
-## 🏗️ Architecture
+---
 
-This repository is structured as a **Monorepo**, containing both the frontend and backend applications:
+## 🛡️ Production & Real-World Data Capabilities
 
-*   **[`/frontend`](./frontend/)**: A modern, responsive React web application built with Vite, TypeScript, and TailwindCSS. It provides a premium user interface with Firebase authentication, settings management (for LLM API keys), and interactive dashboards.
-*   **[`/backend`](./backend/)**: A robust FastAPI Python server that handles file processing, routes LLM requests to local (Ollama) or cloud (OpenRouter) providers, and orchestrates the complex CrewAI agent pipeline.
+The system is engineered to handle messy, real-world datasets without manual pre-formatting:
+* **Multi-Encoding & Delimiter Autodetection**: Automatically handles `utf-8`, `utf-8-sig` (Excel BOM), `latin1`, `cp1252`, and auto-sniffs delimiters (`,`, `;`, `\t`, `|`).
+* **Schema Sanitization**: Strips corrupted characters, drops empty rows/columns, removes auto-generated index columns (`Unnamed: 0`), and normalizes column headers into clean snake_case.
+* **Large Dataset Downsampling**: High-volume datasets (>10k rows) are safely downsampled for visualizations to ensure snappy render times without out-of-memory errors.
+* **High-Cardinality Protection**: Categorical charts automatically limit groupings to top categories to avoid unreadable visualization clutter.
+* **Multi-Tenant Isolation**: Uses Python `ContextVar` tied to Firebase Authentication headers to guarantee isolated storage per workspace.
+* **Dual LLM Architecture**: Supports cloud models (OpenRouter) and 100% private local models (Ollama) so sensitive corporate data never leaves the network.
 
-## 🚀 Getting Started
+---
 
-### Prerequisites
-*   Node.js (v18+)
-*   Python (3.10+)
-*   [Ollama](https://ollama.com/) (Optional: for running local privacy-first models)
+## 🚀 Quick Start (Development)
 
-### 1. Start the Backend
-Navigate to the `backend` directory, install dependencies, and start the FastAPI server:
-```bash
-cd backend
-python -m venv .venv
-source .venv/bin/activate  # On Windows use: .venv\Scripts\activate
-pip install -r requirements.txt
-python -m uvicorn api:app --reload
+### Option 1: 1-Click Launcher (Windows)
+Double-click `start.bat` or run in PowerShell:
+```powershell
+.\start.bat
 ```
+*Spins up both the FastAPI backend and Vite frontend simultaneously and opens your browser.*
 
-### 2. Start the Frontend
-In a new terminal, navigate to the `frontend` directory, install dependencies, and start the Vite dev server:
+### Option 2: Manual Start
 ```bash
+# Backend (Port 8000)
+cd backend
+.venv\Scripts\activate
+python -m uvicorn api:app --reload --port 8000
+
+# Frontend (Port 5173)
 cd frontend
-npm install
 npm run dev
 ```
 
-The application will now be running at `http://localhost:5173`.
+---
 
-## 🔒 Privacy First
+## 🐳 Production Deployment (Docker & Cloud)
 
-This application supports both cloud models (via OpenRouter) and **fully local models** (via Ollama). By selecting a local model in the settings, you guarantee that highly sensitive corporate datasets never leave your local machine or network.
+The entire full-stack application (FastAPI backend + compiled React frontend + WebSocket engine) is containerized into a single deployable image:
+
+```bash
+docker compose up --build
+```
+> The entire platform will be live at `http://localhost:8000` with persistent storage for datasets and reports mounted at `./data` and `./outputs`.
+
+### Cloud Deployment (AWS ECS / GCP Cloud Run / Render)
+1. Build and push the Docker image:
+   ```bash
+   docker build -t your-registry/agentic-data-analyst:latest .
+   docker push your-registry/agentic-data-analyst:latest
+   ```
+2. Deploy the container with environment variables from `.env.example`.
+
+---
+
+## 🧪 Automated QA & Testing Suite
+
+Run the automated deterministic testing framework:
+```bash
+cd backend
+.venv\Scripts\activate
+pytest tests/ -v
+```
